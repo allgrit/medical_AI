@@ -27,7 +27,7 @@ def test_openai_bot_sequential(monkeypatch):
     def fake_create(**kwargs):
         return responses.pop(0)
 
-    monkeypatch.setattr("bot.bot.openai.ChatCompletion.create", fake_create)
+    monkeypatch.setattr("bot.bot._create_chat_completion", fake_create)
     bot_instance = OpenAIBot()
     reply = bot_instance.ask("hello")
     assert reply == "second"
