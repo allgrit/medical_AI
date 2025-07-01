@@ -1,2 +1,6 @@
 openai
 python-telegram-bot
+pdfminer.six
+python-docx
+openpyxl
+xlrd

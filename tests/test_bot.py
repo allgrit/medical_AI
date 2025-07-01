@@ -1,5 +1,8 @@
 import types
 import asyncio
+from io import BytesIO
+import openpyxl
+import docx
 
 import bot.settings as settings
 from bot.bot import OpenAIBot, setup_openai, TelegramBot
@@ -132,6 +135,9 @@ def test_telegram_bot_document_group(monkeypatch):
                 self.chat_id = 1
 
         bot_instance = TelegramBot()
+        async def dummy_read(d):
+            return "doc"
+        monkeypatch.setattr(bot_instance, "_read_document_text", dummy_read)
         monkeypatch.setattr(bot_instance.bot, "ask", lambda c: "docs")
 
         async def send_message(chat_id, text):
@@ -142,6 +148,99 @@ def test_telegram_bot_document_group(monkeypatch):
         await bot_instance._process_media_group("g", ctx)
 
         assert responses == ["docs"]
+
+    asyncio.run(run())
+
+
+def test_telegram_bot_single_document(monkeypatch):
+    async def run():
+        run.reply = None
+        class DummyDocument:
+            file_name = "report.pdf"
+
+        class DummyMessage:
+            caption = None
+            text = None
+            photo = None
+            document = DummyDocument()
+            audio = None
+            media_group_id = None
+
+            def __init__(self):
+                self.chat_id = 1
+
+            async def reply_text(self, text):
+                run.reply = text
+
+        bot_instance = TelegramBot()
+        async def dummy_read(d):
+            return "some text"
+        monkeypatch.setattr(bot_instance, "_read_document_text", dummy_read)
+
+        def fake_ask(content, conv):
+            assert "some text" in content
+            return "ok"
+
+        monkeypatch.setattr(bot_instance.bot, "ask", fake_ask)
+        update = types.SimpleNamespace(message=DummyMessage(), effective_chat=types.SimpleNamespace(id=1))
+        ctx = types.SimpleNamespace(application=types.SimpleNamespace(create_task=lambda c: None))
+        await bot_instance.handle_message(update, ctx)
+        assert run.reply == "ok"
+
+    asyncio.run(run())
+
+
+def _dummy_document(name: str, data: bytes):
+    class Dummy:
+        file_name = name
+
+        async def get_file(self):
+            data_bytes = data
+
+            class F:
+                async def download_as_bytearray(self):
+                    return data_bytes
+
+            return F()
+
+    return Dummy()
+
+
+def test_read_document_text_csv():
+    async def run():
+        bot_instance = TelegramBot()
+        doc = _dummy_document("data.csv", b"a,b\n1,2")
+        text = await bot_instance._read_document_text(doc)
+        assert "1,2" in text
+
+    asyncio.run(run())
+
+
+def test_read_document_text_xlsx():
+    async def run():
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws["A1"] = "hello"
+        bio = BytesIO()
+        wb.save(bio)
+        doc = _dummy_document("file.xlsx", bio.getvalue())
+        bot_instance = TelegramBot()
+        text = await bot_instance._read_document_text(doc)
+        assert "hello" in text
+
+    asyncio.run(run())
+
+
+def test_read_document_text_docx():
+    async def run():
+        docx_file = docx.Document()
+        docx_file.add_paragraph("test")
+        bio = BytesIO()
+        docx_file.save(bio)
+        bot_instance = TelegramBot()
+        doc = _dummy_document("doc.docx", bio.getvalue())
+        text = await bot_instance._read_document_text(doc)
+        assert "test" in text
 
     asyncio.run(run())
 
