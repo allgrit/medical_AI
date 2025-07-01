@@ -50,6 +50,33 @@ def test_openai_bot_image(monkeypatch):
     assert reply == "ok"
 
 
+
+def test_openai_bot_conversation(monkeypatch):
+    monkeypatch.setattr(
+        settings, "ASSISTANTS", [{"role": "assistant", "system_prompt": "A"}]
+    )
+
+    replies = [
+        {"choices": [{"message": {"content": "first"}}]},
+        {"choices": [{"message": {"content": "second"}}]},
+    ]
+
+    def fake_create(**kwargs):
+        return replies.pop(0)
+
+    monkeypatch.setattr("bot.bot._create_chat_completion", fake_create)
+    bot_instance = OpenAIBot()
+    conv = []
+    bot_instance.ask("hi", conv)
+    bot_instance.ask("again", conv)
+
+    assert conv == [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "first"},
+        {"role": "user", "content": "again"},
+        {"role": "assistant", "content": "second"},
+    ]
+
 def test_telegram_bot_album(monkeypatch):
     async def run():
         responses = []
@@ -85,3 +112,4 @@ def test_telegram_bot_album(monkeypatch):
         assert responses == ["album"]
 
     asyncio.run(run())
+
