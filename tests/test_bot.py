@@ -113,3 +113,35 @@ def test_telegram_bot_album(monkeypatch):
 
     asyncio.run(run())
 
+
+def test_telegram_bot_document_group(monkeypatch):
+    async def run():
+        responses = []
+
+        class DummyDocument:
+            file_name = "file.pdf"
+
+        class DummyMessage:
+            def __init__(self, caption=None):
+                self.caption = caption
+                self.text = None
+                self.photo = None
+                self.document = DummyDocument()
+                self.audio = None
+                self.media_group_id = "g"
+                self.chat_id = 1
+
+        bot_instance = TelegramBot()
+        monkeypatch.setattr(bot_instance.bot, "ask", lambda c: "docs")
+
+        async def send_message(chat_id, text):
+            responses.append(text)
+
+        ctx = types.SimpleNamespace(bot=types.SimpleNamespace(send_message=send_message))
+        bot_instance._media_groups["g"] = {"messages": [DummyMessage("hi"), DummyMessage()], "task": None}
+        await bot_instance._process_media_group("g", ctx)
+
+        assert responses == ["docs"]
+
+    asyncio.run(run())
+
