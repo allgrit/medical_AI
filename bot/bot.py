@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import List, Union, Iterable, Optional
 import base64
+import asyncio
 from types import SimpleNamespace
 
 try:  # Allow running tests without installed packages
@@ -98,6 +99,7 @@ class TelegramBot:
     def __init__(self) -> None:
         self.application = ApplicationBuilder().token(settings.TELEGRAM_TOKEN).build()
         self.bot = OpenAIBot()
+
         self.conversations: dict[int, List[dict]] = {}
 
         self.application.add_handler(CommandHandler("start", self.start))
@@ -134,6 +136,13 @@ class TelegramBot:
             content = text
 
         if message.photo:
+            if message.media_group_id:
+                group = self._media_groups.setdefault(message.media_group_id, {"messages": [], "task": None})
+                group["messages"].append(message)
+                if group["task"]:
+                    group["task"].cancel()
+                group["task"] = context.application.create_task(self._process_media_group(message.media_group_id, context))
+                return
             # Download largest size photo
             photo = message.photo[-1]
             file = await photo.get_file()
@@ -158,6 +167,30 @@ class TelegramBot:
                 -settings.CONTEXT_WINDOW_MESSAGES :
             ]
         await message.reply_text(reply)
+
+    async def _process_media_group(self, group_id: str, context: CallbackContext) -> None:
+        await asyncio.sleep(1)
+        group = self._media_groups.pop(group_id, None)
+        if not group:
+            return
+        messages = group["messages"]
+        text = ""
+        for msg in messages:
+            if not text:
+                text = msg.caption or msg.text or ""
+        content: List[dict] = []
+        if text:
+            content.append({"type": "text", "text": text})
+        for msg in messages:
+            if msg.photo:
+                photo = msg.photo[-1]
+                file = await photo.get_file()
+                image_bytes: Iterable[int] = await file.download_as_bytearray()
+                b64 = base64.b64encode(bytearray(image_bytes)).decode("utf-8")
+                image_url = f"data:image/jpeg;base64,{b64}"
+                content.append({"type": "image_url", "image_url": {"url": image_url}})
+        reply = self.bot.ask(content)
+        await context.bot.send_message(chat_id=messages[0].chat_id, text=reply)
 
     def run(self) -> None:
         logger.info("Starting bot")
