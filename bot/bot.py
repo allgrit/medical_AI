@@ -68,7 +68,10 @@ class OpenAIBot:
         messages = [{"role": "system", "content": assistant.system_prompt}] + conversation
         logger.debug("Sending messages: %s", messages)
         resp = _create_chat_completion(model=settings.MODEL, messages=messages)
-        content = resp["choices"][0]["message"]["content"]
+        if isinstance(resp, dict):
+            content = resp["choices"][0]["message"]["content"]
+        else:
+            content = resp.choices[0].message.content
         conversation.append({"role": assistant.role, "content": content})
         return content
 
