@@ -3,5 +3,5 @@ python-telegram-bot
 pdfminer.six
 python-docx
 openpyxl
-xlrd
-textract==1.6.3
+xlrd==1.2.0
+mammoth
