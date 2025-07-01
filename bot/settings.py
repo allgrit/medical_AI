@@ -2,7 +2,7 @@
 
 TELEGRAM_TOKEN = "YOUR_TELEGRAM_TOKEN"
 OPENAI_API_KEY = "YOUR_OPENAI_API_KEY"
-MODEL = "gpt-3.5-turbo"
+MODEL = "gpt-4o"
 CONTEXT_SIZE = 4096
 
 # List of assistants interacting with each other.

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import List
+from typing import List, Union, Iterable
+import base64
 from types import SimpleNamespace
 
 try:  # Allow running tests without installed packages
@@ -75,8 +76,8 @@ class OpenAIBot:
         conversation.append({"role": assistant.role, "content": content})
         return content
 
-    def ask(self, text: str) -> str:
-        conversation = [{"role": "user", "content": text}]
+    def ask(self, content: Union[str, List[dict]]) -> str:
+        conversation = [{"role": "user", "content": content}]
         reply = ""
         for assistant in self.assistants:
             reply = self._query_assistant(conversation, assistant)
@@ -96,18 +97,40 @@ class TelegramBot:
 
     async def handle_message(self, update: Update, context: CallbackContext) -> None:
         message = update.message
-        text = message.text or ""
+        text = message.caption or message.text or ""
+
+        # Default content is just the text string
+        content: Union[str, List[dict]] = text
 
         # Handle attached files
         if message.document:
             file_name = message.document.file_name
-            text += f"\n[User attached file: {file_name}]"
-        if message.photo:
-            text += "\n[User sent a photo]"
-        if message.audio:
-            text += "\n[User sent an audio file]"
+            if text:
+                text += f"\n[User attached file: {file_name}]"
+            else:
+                text = f"[User attached file: {file_name}]"
+            content = text
 
-        reply = self.bot.ask(text)
+        if message.photo:
+            # Download largest size photo
+            photo = message.photo[-1]
+            file = await photo.get_file()
+            image_bytes: Iterable[int] = await file.download_as_bytearray()
+            b64 = base64.b64encode(bytearray(image_bytes)).decode("utf-8")
+            image_url = f"data:image/jpeg;base64,{b64}"
+            content = []
+            if text:
+                content.append({"type": "text", "text": text})
+            content.append({"type": "image_url", "image_url": {"url": image_url}})
+
+        if message.audio:
+            if text:
+                text += "\n[User sent an audio file]"
+            else:
+                text = "[User sent an audio file]"
+            content = text
+
+        reply = self.bot.ask(content)
         await message.reply_text(reply)
 
     def run(self) -> None:
