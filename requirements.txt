@@ -4,3 +4,4 @@ pdfminer.six
 python-docx
 openpyxl
 xlrd
+textract==1.6.3

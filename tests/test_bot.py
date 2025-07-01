@@ -3,6 +3,7 @@ import asyncio
 from io import BytesIO
 import openpyxl
 import docx
+import textract
 
 import bot.settings as settings
 from bot.bot import OpenAIBot, setup_openai, TelegramBot
@@ -241,6 +242,25 @@ def test_read_document_text_docx():
         doc = _dummy_document("doc.docx", bio.getvalue())
         text = await bot_instance._read_document_text(doc)
         assert "test" in text
+
+    asyncio.run(run())
+
+
+def test_read_document_text_doc(monkeypatch):
+    async def run():
+        bot_instance = TelegramBot()
+        doc = _dummy_document("sample.doc", b"dummy")
+
+        processed = {}
+
+        def fake_process(filename):
+            processed["file"] = filename
+            return b"doc text"
+
+        monkeypatch.setattr(textract, "process", fake_process)
+        text = await bot_instance._read_document_text(doc)
+        assert "doc text" in text
+        assert processed
 
     asyncio.run(run())
 

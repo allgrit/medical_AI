@@ -9,10 +9,21 @@ import base64
 import asyncio
 from types import SimpleNamespace
 from io import BytesIO
-from pdfminer.high_level import extract_text
+try:
+    from pdfminer.high_level import extract_text
+except ImportError:  # pragma: no cover - older pdfminer versions
+    from pdfminer.high_level import extract_text_to_fp
+    from io import StringIO
+
+    def extract_text(file) -> str:
+        output = StringIO()
+        extract_text_to_fp(file, output)
+        return output.getvalue()
 import docx
 import openpyxl
 import xlrd
+import tempfile
+import textract
 
 try:  # Allow running tests without installed packages
     import openai
@@ -158,7 +169,10 @@ class TelegramBot:
                         rows.append(",".join(str(c) for c in row))
                 text = "\n".join(rows)
             elif name.endswith(".doc"):
-                text = data.decode("utf-8", errors="ignore")
+                with tempfile.NamedTemporaryFile(suffix=".doc") as tmp:
+                    tmp.write(data)
+                    tmp.flush()
+                    text = textract.process(tmp.name).decode("utf-8", errors="ignore")
             else:
                 text = data.decode("utf-8", errors="ignore")
         except Exception as exc:  # pragma: no cover - fallback if parsing fails
