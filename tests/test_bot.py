@@ -31,3 +31,19 @@ def test_openai_bot_sequential(monkeypatch):
     bot_instance = OpenAIBot()
     reply = bot_instance.ask("hello")
     assert reply == "second"
+
+
+def test_openai_bot_image(monkeypatch):
+    content = [
+        {"type": "text", "text": "hi"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+    ]
+
+    def fake_create(**kwargs):
+        assert kwargs["messages"][1]["content"] == content
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setattr("bot.bot._create_chat_completion", fake_create)
+    bot_instance = OpenAIBot()
+    reply = bot_instance.ask(content)
+    assert reply == "ok"
