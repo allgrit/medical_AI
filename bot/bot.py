@@ -10,7 +10,7 @@ from types import SimpleNamespace
 try:  # Allow running tests without installed packages
     import openai
 except Exception:  # pragma: no cover - handled in tests
-    openai = SimpleNamespace(ChatCompletion=SimpleNamespace(create=lambda **kwargs: None))
+    openai = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: None)))
 
 try:
     from telegram import Update
@@ -26,7 +26,25 @@ except Exception:  # pragma: no cover - telegram not available in tests
     filters = SimpleNamespace(ALL=None)
     ApplicationBuilder = CommandHandler = MessageHandler = SimpleNamespace
 
+# Allow running the script directly by ensuring the package root is on sys.path
+from pathlib import Path
+import sys
+
+package_root = Path(__file__).resolve().parent.parent
+if str(package_root) not in sys.path:
+    sys.path.insert(0, str(package_root))
+
 import bot.settings as settings
+
+
+def _create_chat_completion(**kwargs):
+    """Call the correct OpenAI completion method across library versions."""
+    if hasattr(openai, "OpenAI"):
+        client = openai.OpenAI(api_key=openai.api_key)
+        return client.chat.completions.create(**kwargs)
+    if hasattr(openai, "chat") and hasattr(openai.chat, "completions"):
+        return openai.chat.completions.create(**kwargs)
+    return openai.ChatCompletion.create(**kwargs)
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +70,7 @@ class OpenAIBot:
     def _query_assistant(self, conversation: List[dict], assistant: Assistant) -> str:
         messages = [{"role": "system", "content": assistant.system_prompt}] + conversation
         logger.debug("Sending messages: %s", messages)
-        resp = openai.ChatCompletion.create(model=settings.MODEL, messages=messages)
+        resp = _create_chat_completion(model=settings.MODEL, messages=messages)
         content = resp["choices"][0]["message"]["content"]
         conversation.append({"role": assistant.role, "content": content})
         return content
