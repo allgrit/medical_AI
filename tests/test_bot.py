@@ -1,7 +1,8 @@
 import types
+import asyncio
 
 import bot.settings as settings
-from bot.bot import OpenAIBot, setup_openai
+from bot.bot import OpenAIBot, setup_openai, TelegramBot
 
 
 def test_setup_openai(monkeypatch):
@@ -47,3 +48,40 @@ def test_openai_bot_image(monkeypatch):
     bot_instance = OpenAIBot()
     reply = bot_instance.ask(content)
     assert reply == "ok"
+
+
+def test_telegram_bot_album(monkeypatch):
+    async def run():
+        responses = []
+
+        class DummyPhoto:
+            async def get_file(self):
+                class F:
+                    async def download_as_bytearray(self):
+                        return b"img"
+
+                return F()
+
+        class DummyMessage:
+            def __init__(self, caption=None):
+                self.caption = caption
+                self.text = None
+                self.photo = [DummyPhoto()]
+                self.document = None
+                self.audio = None
+                self.media_group_id = "g"
+                self.chat_id = 1
+
+        bot_instance = TelegramBot()
+        monkeypatch.setattr(bot_instance.bot, "ask", lambda c: "album")
+
+        async def send_message(chat_id, text):
+            responses.append(text)
+
+        ctx = types.SimpleNamespace(bot=types.SimpleNamespace(send_message=send_message))
+        bot_instance._media_groups["g"] = {"messages": [DummyMessage("hi"), DummyMessage()], "task": None}
+        await bot_instance._process_media_group("g", ctx)
+
+        assert responses == ["album"]
+
+    asyncio.run(run())
