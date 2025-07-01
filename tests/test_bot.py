@@ -47,3 +47,30 @@ def test_openai_bot_image(monkeypatch):
     bot_instance = OpenAIBot()
     reply = bot_instance.ask(content)
     assert reply == "ok"
+
+
+def test_openai_bot_conversation(monkeypatch):
+    monkeypatch.setattr(
+        settings, "ASSISTANTS", [{"role": "assistant", "system_prompt": "A"}]
+    )
+
+    replies = [
+        {"choices": [{"message": {"content": "first"}}]},
+        {"choices": [{"message": {"content": "second"}}]},
+    ]
+
+    def fake_create(**kwargs):
+        return replies.pop(0)
+
+    monkeypatch.setattr("bot.bot._create_chat_completion", fake_create)
+    bot_instance = OpenAIBot()
+    conv = []
+    bot_instance.ask("hi", conv)
+    bot_instance.ask("again", conv)
+
+    assert conv == [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "first"},
+        {"role": "user", "content": "again"},
+        {"role": "assistant", "content": "second"},
+    ]

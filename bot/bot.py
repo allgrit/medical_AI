@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import List, Union, Iterable
+from typing import List, Union, Iterable, Optional
 import base64
 from types import SimpleNamespace
 
 try:  # Allow running tests without installed packages
     import openai
 except Exception:  # pragma: no cover - handled in tests
-    openai = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: None)))
+    openai = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: None))
+    )
 
 try:
     from telegram import Update
@@ -44,6 +46,7 @@ def _create_chat_completion(**kwargs):
         return openai.chat.completions.create(**kwargs)
     return openai.ChatCompletion.create(**kwargs)
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,12 +64,15 @@ class Assistant:
 class OpenAIBot:
     def __init__(self, assistants: List[Assistant] | None = None) -> None:
         self.assistants = assistants or [
-            Assistant(role=a["role"], system_prompt=a["system_prompt"]) for a in settings.ASSISTANTS
+            Assistant(role=a["role"], system_prompt=a["system_prompt"])
+            for a in settings.ASSISTANTS
         ]
         setup_openai()
 
     def _query_assistant(self, conversation: List[dict], assistant: Assistant) -> str:
-        messages = [{"role": "system", "content": assistant.system_prompt}] + conversation
+        messages = [
+            {"role": "system", "content": assistant.system_prompt}
+        ] + conversation
         logger.debug("Sending messages: %s", messages)
         resp = _create_chat_completion(model=settings.MODEL, messages=messages)
         if isinstance(resp, dict):
@@ -76,8 +82,12 @@ class OpenAIBot:
         conversation.append({"role": assistant.role, "content": content})
         return content
 
-    def ask(self, content: Union[str, List[dict]]) -> str:
-        conversation = [{"role": "user", "content": content}]
+    def ask(
+        self, content: Union[str, List[dict]], conversation: Optional[List[dict]] = None
+    ) -> str:
+        if conversation is None:
+            conversation = []
+        conversation.append({"role": "user", "content": content})
         reply = ""
         for assistant in self.assistants:
             reply = self._query_assistant(conversation, assistant)
@@ -88,16 +98,28 @@ class TelegramBot:
     def __init__(self) -> None:
         self.application = ApplicationBuilder().token(settings.TELEGRAM_TOKEN).build()
         self.bot = OpenAIBot()
+        self.conversations: dict[int, List[dict]] = {}
 
         self.application.add_handler(CommandHandler("start", self.start))
+        self.application.add_handler(CommandHandler("clear", self.clear))
         self.application.add_handler(MessageHandler(filters.ALL, self.handle_message))
 
     async def start(self, update: Update, context: CallbackContext) -> None:
-        await update.message.reply_text("Hello! Send me a message and I will respond using OpenAI.")
+        await update.message.reply_text(
+            "Hello! Send me a message and I will respond using OpenAI."
+        )
+
+    async def clear(self, update: Update, context: CallbackContext) -> None:
+        chat_id = update.effective_chat.id
+        self.conversations.pop(chat_id, None)
+        await update.message.reply_text("Context cleared.")
 
     async def handle_message(self, update: Update, context: CallbackContext) -> None:
         message = update.message
         text = message.caption or message.text or ""
+
+        chat_id = update.effective_chat.id
+        conversation = self.conversations.setdefault(chat_id, [])
 
         # Default content is just the text string
         content: Union[str, List[dict]] = text
@@ -130,7 +152,11 @@ class TelegramBot:
                 text = "[User sent an audio file]"
             content = text
 
-        reply = self.bot.ask(content)
+        reply = self.bot.ask(content, conversation)
+        if len(conversation) > settings.CONTEXT_WINDOW_MESSAGES:
+            self.conversations[chat_id] = conversation[
+                -settings.CONTEXT_WINDOW_MESSAGES :
+            ]
         await message.reply_text(reply)
 
     def run(self) -> None:
