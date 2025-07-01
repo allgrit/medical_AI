@@ -8,6 +8,11 @@ from typing import List, Union, Iterable, Optional
 import base64
 import asyncio
 from types import SimpleNamespace
+from io import BytesIO
+from pdfminer.high_level import extract_text
+import docx
+import openpyxl
+import xlrd
 
 try:  # Allow running tests without installed packages
     import openai
@@ -126,6 +131,41 @@ class TelegramBot:
         # ``{"messages": [...], "task": asyncio.Task | None}``.
         self._media_groups: dict[str, dict] = {}
 
+    async def _read_document_text(self, document) -> str:
+        """Download a Telegram document and extract text from it."""
+        file = await document.get_file()
+        data = bytes(await file.download_as_bytearray())
+        name = document.file_name.lower()
+        try:
+            if name.endswith(".pdf"):
+                text = extract_text(BytesIO(data))
+            elif name.endswith(".docx"):
+                doc = docx.Document(BytesIO(data))
+                text = "\n".join(p.text for p in doc.paragraphs)
+            elif name.endswith(".xlsx"):
+                wb = openpyxl.load_workbook(BytesIO(data), read_only=True, data_only=True)
+                rows = []
+                for ws in wb.worksheets:
+                    for row in ws.iter_rows(values_only=True):
+                        rows.append(",".join("" if c is None else str(c) for c in row))
+                text = "\n".join(rows)
+            elif name.endswith(".xls"):
+                book = xlrd.open_workbook(file_contents=data)
+                rows = []
+                for sheet in book.sheets():
+                    for row_idx in range(sheet.nrows):
+                        row = sheet.row_values(row_idx)
+                        rows.append(",".join(str(c) for c in row))
+                text = "\n".join(rows)
+            elif name.endswith(".doc"):
+                text = data.decode("utf-8", errors="ignore")
+            else:
+                text = data.decode("utf-8", errors="ignore")
+        except Exception as exc:  # pragma: no cover - fallback if parsing fails
+            logger.exception("Failed to extract document text: %s", exc)
+            return ""
+        return text[: settings.DOC_MAX_CHARS]
+
     async def start(self, update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(
             "Hello! Send me a message and I will respond using OpenAI."
@@ -160,10 +200,13 @@ class TelegramBot:
                 )
                 return
             file_name = message.document.file_name
-            if text:
-                text += f"\n[User attached file: {file_name}]"
+            doc_text = await self._read_document_text(message.document)
+            if doc_text:
+                snippet = doc_text.strip()
+                prefix = f"Content of {file_name}:\n"
+                text = f"{text}\n{prefix}{snippet}" if text else prefix + snippet
             else:
-                text = f"[User attached file: {file_name}]"
+                text = f"{text}\n[User attached file: {file_name}]" if text else f"[User attached file: {file_name}]"
             content = text
 
         if message.photo:
@@ -223,6 +266,12 @@ class TelegramBot:
                 content.append({"type": "image_url", "image_url": {"url": image_url}})
             if msg.document:
                 doc_files.append(msg.document.file_name)
+                doc_text = await self._read_document_text(msg.document)
+                if doc_text:
+                    if content and content[0]["type"] == "text":
+                        content[0]["text"] += f"\nContent of {msg.document.file_name}:\n{doc_text.strip()}"
+                    else:
+                        content.insert(0, {"type": "text", "text": f"Content of {msg.document.file_name}:\n{doc_text.strip()}"})
 
         if doc_files:
             text_part = "User attached files: " + ", ".join(doc_files)
