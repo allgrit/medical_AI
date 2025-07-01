@@ -97,14 +97,34 @@ class OpenAIBot:
 
 class TelegramBot:
     def __init__(self) -> None:
-        self.application = ApplicationBuilder().token(settings.TELEGRAM_TOKEN).build()
+        """Initialize the bot and Telegram application.
+
+        The real Telegram objects are only constructed if the library is
+        available. When running in the test environment, ``telegram`` is not
+        installed and the fallbacks defined above use :class:`types.SimpleNamespace`.
+        In that case we create minimal stub objects so that tests can run
+        without raising ``AttributeError``.
+        """
+        if ApplicationBuilder is SimpleNamespace:
+            # telegram library not installed - create stubs for tests
+            self.application = SimpleNamespace(
+                add_handler=lambda *a, **k: None,
+                create_task=lambda coro: asyncio.create_task(coro),
+                run_polling=lambda: None,
+            )
+        else:
+            self.application = ApplicationBuilder().token(settings.TELEGRAM_TOKEN).build()
+            self.application.add_handler(CommandHandler("start", self.start))
+            self.application.add_handler(CommandHandler("clear", self.clear))
+            self.application.add_handler(MessageHandler(filters.ALL, self.handle_message))
+
         self.bot = OpenAIBot()
 
         self.conversations: dict[int, List[dict]] = {}
-
-        self.application.add_handler(CommandHandler("start", self.start))
-        self.application.add_handler(CommandHandler("clear", self.clear))
-        self.application.add_handler(MessageHandler(filters.ALL, self.handle_message))
+        # Keep track of incoming media groups so that albums can be processed as
+        # a single conversation unit. The mapping is ``media_group_id`` ->
+        # ``{"messages": [...], "task": asyncio.Task | None}``.
+        self._media_groups: dict[str, dict] = {}
 
     async def start(self, update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(
