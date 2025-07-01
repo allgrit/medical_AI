@@ -1,0 +1,12 @@
+# Configuration for Telegram bot using OpenAI models
+
+TELEGRAM_TOKEN = "YOUR_TELEGRAM_TOKEN"
+OPENAI_API_KEY = "YOUR_OPENAI_API_KEY"
+MODEL = "gpt-3.5-turbo"
+CONTEXT_SIZE = 4096
+
+# List of assistants interacting with each other.
+# Each assistant has a role and a system prompt.
+ASSISTANTS = [
+    {"role": "assistant", "system_prompt": "You are a helpful assistant."},
+]
