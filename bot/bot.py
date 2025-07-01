@@ -22,8 +22,7 @@ except ImportError:  # pragma: no cover - older pdfminer versions
 import docx
 import openpyxl
 import xlrd
-import tempfile
-import textract
+import mammoth
 
 try:  # Allow running tests without installed packages
     import openai
@@ -169,10 +168,7 @@ class TelegramBot:
                         rows.append(",".join(str(c) for c in row))
                 text = "\n".join(rows)
             elif name.endswith(".doc"):
-                with tempfile.NamedTemporaryFile(suffix=".doc") as tmp:
-                    tmp.write(data)
-                    tmp.flush()
-                    text = textract.process(tmp.name).decode("utf-8", errors="ignore")
+                text = mammoth.convert_to_markdown(BytesIO(data)).value
             else:
                 text = data.decode("utf-8", errors="ignore")
         except Exception as exc:  # pragma: no cover - fallback if parsing fails

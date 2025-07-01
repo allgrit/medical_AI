@@ -3,7 +3,7 @@ import asyncio
 from io import BytesIO
 import openpyxl
 import docx
-import textract
+import mammoth
 
 import bot.settings as settings
 from bot.bot import OpenAIBot, setup_openai, TelegramBot
@@ -253,11 +253,13 @@ def test_read_document_text_doc(monkeypatch):
 
         processed = {}
 
-        def fake_process(filename):
-            processed["file"] = filename
-            return b"doc text"
+        def fake_convert(fileobj):
+            processed["called"] = True
+            assert fileobj.read() == b"dummy"
+            fileobj.seek(0)
+            return types.SimpleNamespace(value="doc text")
 
-        monkeypatch.setattr(textract, "process", fake_process)
+        monkeypatch.setattr(mammoth, "convert_to_markdown", fake_convert)
         text = await bot_instance._read_document_text(doc)
         assert "doc text" in text
         assert processed
