@@ -26,6 +26,14 @@ except Exception:  # pragma: no cover - telegram not available in tests
     filters = SimpleNamespace(ALL=None)
     ApplicationBuilder = CommandHandler = MessageHandler = SimpleNamespace
 
+# Allow running the script directly by ensuring the package root is on sys.path
+from pathlib import Path
+import sys
+
+package_root = Path(__file__).resolve().parent.parent
+if str(package_root) not in sys.path:
+    sys.path.insert(0, str(package_root))
+
 import bot.settings as settings
 
 logger = logging.getLogger(__name__)
