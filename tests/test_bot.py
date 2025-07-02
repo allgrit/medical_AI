@@ -286,3 +286,44 @@ def test_read_document_text_doc(monkeypatch):
 
     asyncio.run(run())
 
+
+def test_consilium_mode(monkeypatch):
+    async def run():
+        responses = []
+
+        class DummyMessage:
+            caption = None
+            text = "hi"
+            photo = None
+            document = None
+            audio = None
+            media_group_id = None
+
+            def __init__(self):
+                self.chat_id = 1
+
+            async def reply_text(self, text):
+                responses.append(text)
+
+        bot_instance = TelegramBot()
+
+        # default bot reply
+        monkeypatch.setattr(bot_instance.bot, "ask", lambda c, conv=None: "default")
+
+        update = types.SimpleNamespace(message=DummyMessage(), effective_chat=types.SimpleNamespace(id=1))
+        ctx = types.SimpleNamespace(application=types.SimpleNamespace(create_task=lambda c: None))
+
+        await bot_instance.start_consilium(update, ctx)
+        assert 1 in bot_instance.bots
+
+        monkeypatch.setattr(bot_instance.bots[1], "ask", lambda c, conv=None: "consilium")
+        await bot_instance.handle_message(update, ctx)
+        assert responses[-1] == "consilium"
+
+        await bot_instance.stop_consilium(update, ctx)
+        assert 1 not in bot_instance.bots
+        await bot_instance.handle_message(update, ctx)
+        assert responses[-1] == "default"
+
+    asyncio.run(run())
+
