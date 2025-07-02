@@ -82,11 +82,17 @@ class Assistant:
 
 
 class OpenAIBot:
-    def __init__(self, assistants: List[Assistant] | None = None) -> None:
-        self.assistants = assistants or [
-            Assistant(role=a["role"], system_prompt=a["system_prompt"])
-            for a in settings.ASSISTANTS
+    def __init__(self, assistants: List[Assistant | dict] | None = None) -> None:
+        if assistants is None:
+            assistants = settings.ASSISTANTS
+
+        self.assistants = [
+            a
+            if isinstance(a, Assistant)
+            else Assistant(role=a["role"], system_prompt=a["system_prompt"])
+            for a in assistants
         ]
+
         setup_openai()
 
     def _query_assistant(self, conversation: List[dict], assistant: Assistant) -> str:
