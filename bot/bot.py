@@ -132,9 +132,13 @@ class TelegramBot:
             self.application = ApplicationBuilder().token(settings.TELEGRAM_TOKEN).build()
             self.application.add_handler(CommandHandler("start", self.start))
             self.application.add_handler(CommandHandler("clear", self.clear))
+            self.application.add_handler(CommandHandler("consilium", self.start_consilium))
+            self.application.add_handler(CommandHandler("stopconsilium", self.stop_consilium))
             self.application.add_handler(MessageHandler(filters.ALL, self.handle_message))
 
         self.bot = OpenAIBot()
+        # Per-chat specialized bots, used for the consilium mode
+        self.bots: dict[int, OpenAIBot] = {}
 
         self.conversations: dict[int, List[dict]] = {}
         # Keep track of incoming media groups so that albums can be processed as
@@ -185,13 +189,26 @@ class TelegramBot:
 
     async def start(self, update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(
-            "Hello! Send me a message and I will respond using OpenAI."
+            "Hello! Send me a message and I will respond using OpenAI. "
+            "Use /consilium to start a medical consilium and /stopconsilium to end it."
         )
 
     async def clear(self, update: Update, context: CallbackContext) -> None:
         chat_id = update.effective_chat.id
         self.conversations.pop(chat_id, None)
         await update.message.reply_text("Context cleared.")
+
+    async def start_consilium(self, update: Update, context: CallbackContext) -> None:
+        """Enable medical consilium mode for the chat."""
+        chat_id = update.effective_chat.id
+        self.bots[chat_id] = OpenAIBot(settings.CONSILIUM_ASSISTANTS)
+        await update.message.reply_text("Consilium started.")
+
+    async def stop_consilium(self, update: Update, context: CallbackContext) -> None:
+        """Disable medical consilium mode for the chat."""
+        chat_id = update.effective_chat.id
+        self.bots.pop(chat_id, None)
+        await update.message.reply_text("Consilium stopped.")
 
     async def handle_message(self, update: Update, context: CallbackContext) -> None:
         message = update.message
@@ -259,7 +276,8 @@ class TelegramBot:
                 text = "[User sent an audio file]"
             content = text
 
-        reply = self.bot.ask(content, conversation)
+        bot = self.bots.get(chat_id, self.bot)
+        reply = bot.ask(content, conversation)
         if len(conversation) > settings.CONTEXT_WINDOW_MESSAGES:
             self.conversations[chat_id] = conversation[
                 -settings.CONTEXT_WINDOW_MESSAGES :
@@ -306,7 +324,8 @@ class TelegramBot:
             else:
                 content.insert(0, {"type": "text", "text": "[" + text_part + "]"})
 
-        reply = self.bot.ask(content if len(content) > 1 else content[0]["text"] if content else "")
+        bot = self.bots.get(messages[0].chat_id, self.bot)
+        reply = bot.ask(content if len(content) > 1 else content[0]["text"] if content else "")
         await context.bot.send_message(chat_id=messages[0].chat_id, text=reply)
 
     def run(self) -> None:
