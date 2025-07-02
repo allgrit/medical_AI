@@ -187,16 +187,23 @@ class TelegramBot:
                 )
                 images = tree.xpath("//img/@src")
             elif name.endswith(".doc"):
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".doc") as tmp:
-                    tmp.write(data)
-                    tmp.flush()
+                fd, path = tempfile.mkstemp(suffix=".doc")
+                try:
+                    with os.fdopen(fd, "wb") as tmp:
+                        tmp.write(data)
                     try:
                         result = subprocess.run(
-                            ["antiword", tmp.name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+                            ["antiword", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
                         )
                         text = result.stdout.decode("utf-8", errors="ignore")
-                    finally:
-                        os.unlink(tmp.name)
+                    except FileNotFoundError:
+                        logger.error("antiword not found - cannot extract .doc text")
+                        return "", []
+                finally:
+                    try:
+                        os.unlink(path)
+                    except PermissionError:
+                        logger.warning("Failed to delete temporary DOC file %s", path)
             elif name.endswith(".xlsx"):
                 wb = openpyxl.load_workbook(BytesIO(data), read_only=True, data_only=True)
                 rows = []
