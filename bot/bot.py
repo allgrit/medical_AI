@@ -200,7 +200,10 @@ class TelegramBot:
                         logger.error("antiword not found - cannot extract .doc text")
                         return "", []
                 finally:
-                    os.unlink(path)
+                    try:
+                        os.unlink(path)
+                    except PermissionError:
+                        logger.warning("Failed to delete temporary DOC file %s", path)
             elif name.endswith(".xlsx"):
                 wb = openpyxl.load_workbook(BytesIO(data), read_only=True, data_only=True)
                 rows = []

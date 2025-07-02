@@ -304,6 +304,30 @@ def test_read_document_text_doc_no_antiword(monkeypatch):
     asyncio.run(run())
 
 
+def test_read_document_text_doc_unlink_error(monkeypatch):
+    async def run():
+        bot_instance = TelegramBot()
+        doc = _dummy_document("sample.doc", b"dummy")
+
+        def fake_run(*a, **k):
+            raise FileNotFoundError
+
+        import subprocess
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        def fake_unlink(path):
+            raise PermissionError
+
+        import os
+        monkeypatch.setattr(os, "unlink", fake_unlink)
+
+        text, images = await bot_instance._read_document_text(doc)
+        assert text == ""
+        assert images == []
+
+    asyncio.run(run())
+
+
 def test_consilium_mode(monkeypatch):
     async def run():
         responses = []
