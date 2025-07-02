@@ -23,6 +23,7 @@ import docx
 import openpyxl
 import xlrd
 import mammoth
+import lxml.html
 
 try:  # Allow running tests without installed packages
     import openai
@@ -141,17 +142,25 @@ class TelegramBot:
         # ``{"messages": [...], "task": asyncio.Task | None}``.
         self._media_groups: dict[str, dict] = {}
 
-    async def _read_document_text(self, document) -> str:
-        """Download a Telegram document and extract text from it."""
+    async def _read_document_text(self, document) -> tuple[str, List[str]]:
+        """Download a Telegram document and extract text and images from it."""
         file = await document.get_file()
         data = bytes(await file.download_as_bytearray())
         name = document.file_name.lower()
+        images: List[str] = []
         try:
             if name.endswith(".pdf"):
                 text = extract_text(BytesIO(data))
-            elif name.endswith(".docx"):
-                doc = docx.Document(BytesIO(data))
-                text = "\n".join(p.text for p in doc.paragraphs)
+            elif name.endswith(".docx") or name.endswith(".doc"):
+                result = mammoth.convert_to_html(
+                    BytesIO(data), convert_image=mammoth.images.data_uri
+                )
+                html = result.value
+                tree = lxml.html.fromstring(html)
+                text = "\n".join(
+                    t.strip() for t in tree.xpath("//text()") if t.strip()
+                )
+                images = tree.xpath("//img/@src")
             elif name.endswith(".xlsx"):
                 wb = openpyxl.load_workbook(BytesIO(data), read_only=True, data_only=True)
                 rows = []
@@ -167,14 +176,12 @@ class TelegramBot:
                         row = sheet.row_values(row_idx)
                         rows.append(",".join(str(c) for c in row))
                 text = "\n".join(rows)
-            elif name.endswith(".doc"):
-                text = mammoth.convert_to_markdown(BytesIO(data)).value
             else:
                 text = data.decode("utf-8", errors="ignore")
         except Exception as exc:  # pragma: no cover - fallback if parsing fails
             logger.exception("Failed to extract document text: %s", exc)
-            return ""
-        return text[: settings.DOC_MAX_CHARS]
+            return "", []
+        return text[: settings.DOC_MAX_CHARS], images
 
     async def start(self, update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(
@@ -210,7 +217,7 @@ class TelegramBot:
                 )
                 return
             file_name = message.document.file_name
-            doc_text = await self._read_document_text(message.document)
+            doc_text, doc_images = await self._read_document_text(message.document)
             if doc_text:
                 snippet = doc_text.strip()
                 prefix = f"Content of {file_name}:\n"
@@ -218,6 +225,13 @@ class TelegramBot:
             else:
                 text = f"{text}\n[User attached file: {file_name}]" if text else f"[User attached file: {file_name}]"
             content = text
+            if doc_images:
+                content = [
+                    {"type": "text", "text": text}
+                ] + [
+                    {"type": "image_url", "image_url": {"url": img}}
+                    for img in doc_images
+                ]
 
         if message.photo:
             if message.media_group_id:
@@ -276,12 +290,14 @@ class TelegramBot:
                 content.append({"type": "image_url", "image_url": {"url": image_url}})
             if msg.document:
                 doc_files.append(msg.document.file_name)
-                doc_text = await self._read_document_text(msg.document)
+                doc_text, doc_images = await self._read_document_text(msg.document)
                 if doc_text:
                     if content and content[0]["type"] == "text":
                         content[0]["text"] += f"\nContent of {msg.document.file_name}:\n{doc_text.strip()}"
                     else:
                         content.insert(0, {"type": "text", "text": f"Content of {msg.document.file_name}:\n{doc_text.strip()}"})
+                for img in doc_images:
+                    content.append({"type": "image_url", "image_url": {"url": img}})
 
         if doc_files:
             text_part = "User attached files: " + ", ".join(doc_files)

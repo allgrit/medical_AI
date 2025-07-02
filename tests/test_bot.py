@@ -4,6 +4,7 @@ from io import BytesIO
 import openpyxl
 import docx
 import mammoth
+import os
 
 import bot.settings as settings
 from bot.bot import OpenAIBot, setup_openai, TelegramBot
@@ -137,7 +138,7 @@ def test_telegram_bot_document_group(monkeypatch):
 
         bot_instance = TelegramBot()
         async def dummy_read(d):
-            return "doc"
+            return "doc", []
         monkeypatch.setattr(bot_instance, "_read_document_text", dummy_read)
         monkeypatch.setattr(bot_instance.bot, "ask", lambda c: "docs")
 
@@ -175,7 +176,7 @@ def test_telegram_bot_single_document(monkeypatch):
 
         bot_instance = TelegramBot()
         async def dummy_read(d):
-            return "some text"
+            return "some text", []
         monkeypatch.setattr(bot_instance, "_read_document_text", dummy_read)
 
         def fake_ask(content, conv):
@@ -211,8 +212,9 @@ def test_read_document_text_csv():
     async def run():
         bot_instance = TelegramBot()
         doc = _dummy_document("data.csv", b"a,b\n1,2")
-        text = await bot_instance._read_document_text(doc)
+        text, images = await bot_instance._read_document_text(doc)
         assert "1,2" in text
+        assert images == []
 
     asyncio.run(run())
 
@@ -226,8 +228,9 @@ def test_read_document_text_xlsx():
         wb.save(bio)
         doc = _dummy_document("file.xlsx", bio.getvalue())
         bot_instance = TelegramBot()
-        text = await bot_instance._read_document_text(doc)
+        text, images = await bot_instance._read_document_text(doc)
         assert "hello" in text
+        assert images == []
 
     asyncio.run(run())
 
@@ -236,12 +239,27 @@ def test_read_document_text_docx():
     async def run():
         docx_file = docx.Document()
         docx_file.add_paragraph("test")
+        table = docx_file.add_table(rows=1, cols=1)
+        table.cell(0, 0).text = "cell"
+        # Add dummy image
+        from PIL import Image
+        from io import BytesIO
+        img = Image.new("RGB", (10, 10), color="red")
+        img_bio = BytesIO()
+        img.save(img_bio, format="PNG")
+        img_path = "test.png"
+        with open(img_path, "wb") as f:
+            f.write(img_bio.getvalue())
+        docx_file.add_picture(img_path)
         bio = BytesIO()
         docx_file.save(bio)
         bot_instance = TelegramBot()
         doc = _dummy_document("doc.docx", bio.getvalue())
-        text = await bot_instance._read_document_text(doc)
+        text, images = await bot_instance._read_document_text(doc)
         assert "test" in text
+        assert "cell" in text
+        assert images and images[0].startswith("data:image")
+        os.remove(img_path)
 
     asyncio.run(run())
 
@@ -253,15 +271,16 @@ def test_read_document_text_doc(monkeypatch):
 
         processed = {}
 
-        def fake_convert(fileobj):
+        def fake_convert(fileobj, **kwargs):
             processed["called"] = True
             assert fileobj.read() == b"dummy"
             fileobj.seek(0)
-            return types.SimpleNamespace(value="doc text")
+            return types.SimpleNamespace(value="<p>doc text</p>")
 
-        monkeypatch.setattr(mammoth, "convert_to_markdown", fake_convert)
-        text = await bot_instance._read_document_text(doc)
+        monkeypatch.setattr(mammoth, "convert_to_html", fake_convert)
+        text, images = await bot_instance._read_document_text(doc)
         assert "doc text" in text
+        assert images == []
         assert processed
 
     asyncio.run(run())
