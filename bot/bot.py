@@ -114,10 +114,16 @@ class OpenAIBot:
         if conversation is None:
             conversation = []
         conversation.append({"role": "user", "content": content})
-        reply = ""
+
+        results = []
         for assistant in self.assistants:
             reply = self._query_assistant(conversation, assistant)
-        return reply
+            results.append((assistant.role, reply))
+
+        if len(results) == 1:
+            return results[0][1]
+
+        return "\n\n".join(f"{role}: {text}" for role, text in results)
 
 
 class TelegramBot:
