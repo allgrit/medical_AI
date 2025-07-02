@@ -287,6 +287,23 @@ def test_read_document_text_doc(monkeypatch):
     asyncio.run(run())
 
 
+def test_read_document_text_doc_no_antiword(monkeypatch):
+    async def run():
+        bot_instance = TelegramBot()
+        doc = _dummy_document("sample.doc", b"dummy")
+
+        def fake_run(*a, **k):
+            raise FileNotFoundError
+
+        import subprocess
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        text, images = await bot_instance._read_document_text(doc)
+        assert text == ""
+        assert images == []
+
+    asyncio.run(run())
+
+
 def test_consilium_mode(monkeypatch):
     async def run():
         responses = []
