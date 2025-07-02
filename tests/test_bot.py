@@ -271,13 +271,14 @@ def test_read_document_text_doc(monkeypatch):
 
         processed = {}
 
-        def fake_convert(fileobj, **kwargs):
-            processed["called"] = True
-            assert fileobj.read() == b"dummy"
-            fileobj.seek(0)
-            return types.SimpleNamespace(value="<p>doc text</p>")
+        def fake_run(cmd, stdout=None, stderr=None, check=None):
+            processed["cmd"] = cmd
+            assert "antiword" in cmd[0]
+            # simulate successful conversion
+            return types.SimpleNamespace(stdout=b"doc text")
 
-        monkeypatch.setattr(mammoth, "convert_to_html", fake_convert)
+        import subprocess
+        monkeypatch.setattr(subprocess, "run", fake_run)
         text, images = await bot_instance._read_document_text(doc)
         assert "doc text" in text
         assert images == []

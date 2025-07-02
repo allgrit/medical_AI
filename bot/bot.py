@@ -24,6 +24,9 @@ import openpyxl
 import xlrd
 import mammoth
 import lxml.html
+import subprocess
+import tempfile
+import os
 
 try:  # Allow running tests without installed packages
     import openai
@@ -151,7 +154,7 @@ class TelegramBot:
         try:
             if name.endswith(".pdf"):
                 text = extract_text(BytesIO(data))
-            elif name.endswith(".docx") or name.endswith(".doc"):
+            elif name.endswith(".docx"):
                 result = mammoth.convert_to_html(
                     BytesIO(data), convert_image=mammoth.images.data_uri
                 )
@@ -161,6 +164,17 @@ class TelegramBot:
                     t.strip() for t in tree.xpath("//text()") if t.strip()
                 )
                 images = tree.xpath("//img/@src")
+            elif name.endswith(".doc"):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".doc") as tmp:
+                    tmp.write(data)
+                    tmp.flush()
+                    try:
+                        result = subprocess.run(
+                            ["antiword", tmp.name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+                        )
+                        text = result.stdout.decode("utf-8", errors="ignore")
+                    finally:
+                        os.unlink(tmp.name)
             elif name.endswith(".xlsx"):
                 wb = openpyxl.load_workbook(BytesIO(data), read_only=True, data_only=True)
                 rows = []
