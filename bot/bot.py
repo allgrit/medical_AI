@@ -161,6 +161,12 @@ class TelegramBot:
         # ``{"messages": [...], "task": asyncio.Task | None}``.
         self._media_groups: dict[str, dict] = {}
 
+    async def _send_chunks(self, send_func, text: str) -> None:
+        """Send long text in chunks respecting Telegram limits."""
+        limit = getattr(settings, "TELEGRAM_MAX_CHARS", 4096)
+        for i in range(0, len(text), limit):
+            await send_func(text[i : i + limit])
+
     async def _read_document_text(self, document) -> tuple[str, List[str]]:
         """Download a Telegram document and extract text and images from it."""
         file = await document.get_file()
@@ -308,7 +314,7 @@ class TelegramBot:
             self.conversations[chat_id] = conversation[
                 -settings.CONTEXT_WINDOW_MESSAGES :
             ]
-        await message.reply_text(reply)
+        await self._send_chunks(message.reply_text, reply)
 
     async def _process_media_group(self, group_id: str, context: CallbackContext) -> None:
         await asyncio.sleep(1)
@@ -351,8 +357,13 @@ class TelegramBot:
                 content.insert(0, {"type": "text", "text": "[" + text_part + "]"})
 
         bot = self.bots.get(messages[0].chat_id, self.bot)
-        reply = bot.ask(content if len(content) > 1 else content[0]["text"] if content else "")
-        await context.bot.send_message(chat_id=messages[0].chat_id, text=reply)
+        reply = bot.ask(
+            content if len(content) > 1 else content[0]["text"] if content else ""
+        )
+        await self._send_chunks(
+            lambda t: context.bot.send_message(chat_id=messages[0].chat_id, text=t),
+            reply,
+        )
 
     def run(self) -> None:
         logger.info("Starting bot")
