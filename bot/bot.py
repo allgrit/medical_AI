@@ -71,6 +71,8 @@ def _is_chat_model(model: str | None) -> bool:
     if not model:
         return True
     name = str(model).lower().strip()
+    if "deep-research" in name:
+        return False
     if "gpt-" in name and "-instruct" not in name:
         return True
     if name.startswith("claude"):
