@@ -27,6 +27,8 @@ import lxml.html
 import subprocess
 import tempfile
 import os
+import string
+import re
 
 try:  # Allow running tests without installed packages
     import openai
@@ -68,6 +70,19 @@ def _create_chat_completion(**kwargs):
 
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_doc_text(data: bytes) -> str:
+    """Naively extract text from a legacy .doc file."""
+    try:
+        text = data.decode("utf-16le", errors="ignore")
+    except Exception:
+        text = ""
+    if not text.strip():
+        text = data.decode("cp1252", errors="ignore")
+    text = "".join(ch if ch.isprintable() or ch in "\n\r\t" else " " for ch in text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 def setup_openai() -> None:
@@ -187,32 +202,7 @@ class TelegramBot:
                 )
                 images = tree.xpath("//img/@src")
             elif name.endswith(".doc"):
-                fd, path = tempfile.mkstemp(suffix=".doc")
-                try:
-                    with os.fdopen(fd, "wb") as tmp:
-                        tmp.write(data)
-                    try:
-                        result = subprocess.run(
-                            ["antiword", path],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            check=True,
-                        )
-                        text = result.stdout.decode("utf-8", errors="ignore")
-                    except FileNotFoundError:
-                        logger.error(
-                            "antiword not found - cannot extract .doc text"
-                        )
-                        return "", []
-                finally:
-                    try:
-                        os.unlink(path)
-                    except PermissionError:
-                        logger.warning(
-                            "Failed to delete temporary file %s", path
-                        )
-                    except FileNotFoundError:  # pragma: no cover - already deleted
-                        pass
+                text = _extract_doc_text(data)
             elif name.endswith(".xlsx"):
                 wb = openpyxl.load_workbook(BytesIO(data), read_only=True, data_only=True)
                 rows = []
