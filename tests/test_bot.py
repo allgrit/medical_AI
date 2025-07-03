@@ -6,6 +6,7 @@ import docx
 import mammoth
 import os
 import pytest
+import openai
 
 import bot.settings as settings
 from bot.bot import OpenAIBot, setup_openai, TelegramBot
@@ -23,6 +24,7 @@ def _patch_openai(monkeypatch):
         chat=types.SimpleNamespace(
             completions=types.SimpleNamespace(create=lambda **k: None)
         ),
+        NotFoundError=openai.NotFoundError,
     )
     monkeypatch.setattr("bot.bot.openai", fake_openai)
 
@@ -77,7 +79,6 @@ def test_openai_bot_image(monkeypatch):
     assert reply == "ok"
 
 
-
 def test_openai_bot_conversation(monkeypatch):
     monkeypatch.setattr(
         settings, "ASSISTANTS", [{"role": "assistant", "system_prompt": "A"}]
@@ -103,6 +104,7 @@ def test_openai_bot_conversation(monkeypatch):
         {"role": "user", "content": "again"},
         {"role": "assistant", "content": "second"},
     ]
+
 
 def test_telegram_bot_album(monkeypatch):
     async def run():
@@ -134,8 +136,13 @@ def test_telegram_bot_album(monkeypatch):
         async def send_message(chat_id, text):
             responses.append(text)
 
-        ctx = types.SimpleNamespace(bot=types.SimpleNamespace(send_message=send_message))
-        bot_instance._media_groups["g"] = {"messages": [DummyMessage("hi"), DummyMessage()], "task": None}
+        ctx = types.SimpleNamespace(
+            bot=types.SimpleNamespace(send_message=send_message)
+        )
+        bot_instance._media_groups["g"] = {
+            "messages": [DummyMessage("hi"), DummyMessage()],
+            "task": None,
+        }
         await bot_instance._process_media_group("g", ctx)
 
         assert responses == ["album"]
@@ -161,8 +168,10 @@ def test_telegram_bot_document_group(monkeypatch):
                 self.chat_id = 1
 
         bot_instance = TelegramBot()
+
         async def dummy_read(d):
             return "doc", []
+
         monkeypatch.setattr(bot_instance, "_read_document_text", dummy_read)
         monkeypatch.setattr(
             bot_instance.bot, "ask_stream", lambda c: iter([("assistant", "docs")])
@@ -171,8 +180,13 @@ def test_telegram_bot_document_group(monkeypatch):
         async def send_message(chat_id, text):
             responses.append(text)
 
-        ctx = types.SimpleNamespace(bot=types.SimpleNamespace(send_message=send_message))
-        bot_instance._media_groups["g"] = {"messages": [DummyMessage("hi"), DummyMessage()], "task": None}
+        ctx = types.SimpleNamespace(
+            bot=types.SimpleNamespace(send_message=send_message)
+        )
+        bot_instance._media_groups["g"] = {
+            "messages": [DummyMessage("hi"), DummyMessage()],
+            "task": None,
+        }
         await bot_instance._process_media_group("g", ctx)
 
         assert responses == ["docs"]
@@ -183,6 +197,7 @@ def test_telegram_bot_document_group(monkeypatch):
 def test_telegram_bot_single_document(monkeypatch):
     async def run():
         run.reply = None
+
         class DummyDocument:
             file_name = "report.pdf"
 
@@ -201,8 +216,10 @@ def test_telegram_bot_single_document(monkeypatch):
                 run.reply = text
 
         bot_instance = TelegramBot()
+
         async def dummy_read(d):
             return "some text", []
+
         monkeypatch.setattr(bot_instance, "_read_document_text", dummy_read)
 
         def fake_stream(content, conv):
@@ -210,8 +227,12 @@ def test_telegram_bot_single_document(monkeypatch):
             return iter([("assistant", "ok")])
 
         monkeypatch.setattr(bot_instance.bot, "ask_stream", fake_stream)
-        update = types.SimpleNamespace(message=DummyMessage(), effective_chat=types.SimpleNamespace(id=1))
-        ctx = types.SimpleNamespace(application=types.SimpleNamespace(create_task=lambda c: None))
+        update = types.SimpleNamespace(
+            message=DummyMessage(), effective_chat=types.SimpleNamespace(id=1)
+        )
+        ctx = types.SimpleNamespace(
+            application=types.SimpleNamespace(create_task=lambda c: None)
+        )
         await bot_instance.handle_message(update, ctx)
         assert run.reply == "ok"
 
@@ -270,6 +291,7 @@ def test_read_document_text_docx():
         # Add dummy image
         from PIL import Image
         from io import BytesIO
+
         img = Image.new("RGB", (10, 10), color="red")
         img_bio = BytesIO()
         img.save(img_bio, format="PNG")
@@ -324,17 +346,25 @@ def test_consilium_mode(monkeypatch):
 
         # default bot reply
         monkeypatch.setattr(
-            bot_instance.bot, "ask_stream", lambda c, conv=None: iter([("assistant", "default")])
+            bot_instance.bot,
+            "ask_stream",
+            lambda c, conv=None: iter([("assistant", "default")]),
         )
 
-        update = types.SimpleNamespace(message=DummyMessage(), effective_chat=types.SimpleNamespace(id=1))
-        ctx = types.SimpleNamespace(application=types.SimpleNamespace(create_task=lambda c: None))
+        update = types.SimpleNamespace(
+            message=DummyMessage(), effective_chat=types.SimpleNamespace(id=1)
+        )
+        ctx = types.SimpleNamespace(
+            application=types.SimpleNamespace(create_task=lambda c: None)
+        )
 
         await bot_instance.start_consilium(update, ctx)
         assert 1 in bot_instance.bots
 
         monkeypatch.setattr(
-            bot_instance.bots[1], "ask_stream", lambda c, conv=None: iter([("doctor", "consilium")])
+            bot_instance.bots[1],
+            "ask_stream",
+            lambda c, conv=None: iter([("doctor", "consilium")]),
         )
         await bot_instance.handle_message(update, ctx)
         assert responses[-1] == "doctor: consilium"
@@ -390,3 +420,38 @@ def test_bot_selection(monkeypatch):
 
     asyncio.run(run())
 
+
+def test_create_chat_completion_fallback(monkeypatch):
+    """Ensure endpoint fallback if model type detection is wrong."""
+
+    calls = []
+
+    def fail_chat(**kwargs):
+        calls.append("chat")
+        response = types.SimpleNamespace(request=None, status_code=404, headers={})
+        raise openai.NotFoundError(
+            "This model is only supported in v1/responses and not in v1/chat/completions.",
+            response=response,
+            body=None,
+        )
+
+    def ok_completion(**kwargs):
+        calls.append("completion")
+        return {"choices": [{"text": "ok"}]}
+
+    fake_openai = types.SimpleNamespace(
+        api_key=None,
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=fail_chat)),
+        completions=types.SimpleNamespace(create=ok_completion),
+        NotFoundError=openai.NotFoundError,
+    )
+
+    monkeypatch.setattr("bot.bot.openai", fake_openai)
+
+    from bot.bot import _create_chat_completion
+
+    resp = _create_chat_completion(
+        model="o4-mini-deep-research", messages=[{"role": "user", "content": "hi"}]
+    )
+    assert resp["choices"][0]["text"] == "ok"
+    assert calls == ["chat", "completion"]
