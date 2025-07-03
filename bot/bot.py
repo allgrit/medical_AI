@@ -97,7 +97,9 @@ class Assistant:
 
 
 class OpenAIBot:
-    def __init__(self, assistants: List[Assistant | dict] | None = None) -> None:
+    def __init__(
+        self, assistants: List[Assistant | dict] | None = None, model: str | None = None
+    ) -> None:
         if assistants is None:
             assistants = settings.ASSISTANTS
 
@@ -108,6 +110,8 @@ class OpenAIBot:
             for a in assistants
         ]
 
+        self.model = model or settings.MODEL
+
         setup_openai()
 
     def _query_assistant(self, conversation: List[dict], assistant: Assistant) -> str:
@@ -115,7 +119,7 @@ class OpenAIBot:
             {"role": "system", "content": assistant.system_prompt}
         ] + conversation
         logger.debug("Sending messages: %s", messages)
-        resp = _create_chat_completion(model=settings.MODEL, messages=messages)
+        resp = _create_chat_completion(model=self.model, messages=messages)
         if isinstance(resp, dict):
             content = resp["choices"][0]["message"]["content"]
         else:
@@ -176,9 +180,12 @@ class TelegramBot:
             self.application.add_handler(CommandHandler("clear", self.clear))
             self.application.add_handler(CommandHandler("consilium", self.start_consilium))
             self.application.add_handler(CommandHandler("stopconsilium", self.stop_consilium))
+            self.application.add_handler(CommandHandler("models", self.list_models))
+            self.application.add_handler(CommandHandler("model", self.set_model))
             self.application.add_handler(MessageHandler(filters.ALL, self.handle_message))
 
-        self.bot = OpenAIBot()
+        self.available_models = self._fetch_models()
+        self.bot = OpenAIBot(model=settings.MODEL)
         # Per-chat specialized bots, used for the consilium mode
         self.bots: dict[int, OpenAIBot] = {}
 
@@ -187,6 +194,20 @@ class TelegramBot:
         # a single conversation unit. The mapping is ``media_group_id`` ->
         # ``{"messages": [...], "task": asyncio.Task | None}``.
         self._media_groups: dict[str, dict] = {}
+
+    def _fetch_models(self) -> List[str]:
+        """Return available OpenAI models or the default model if lookup fails."""
+        try:
+            if hasattr(openai, "Model"):
+                resp = openai.Model.list()
+            else:
+                resp = openai.models.list()
+            data = resp.get("data", []) if isinstance(resp, dict) else getattr(resp, "data", [])
+            models = [m.get("id") if isinstance(m, dict) else getattr(m, "id", None) for m in data]
+            return [m for m in models if m]
+        except Exception as exc:  # pragma: no cover - network issues
+            logger.exception("Failed to fetch models: %s", exc)
+            return [settings.MODEL]
 
     async def _send_chunks(self, send_func, text: str) -> None:
         """Send long text in chunks respecting Telegram limits."""
@@ -248,10 +269,32 @@ class TelegramBot:
         self.conversations.pop(chat_id, None)
         await update.message.reply_text("Context cleared.")
 
+    async def list_models(self, update: Update, context: CallbackContext) -> None:
+        """List available models and show the current selection."""
+        await update.message.reply_text(
+            "Available models: "
+            + ", ".join(self.available_models)
+            + f"\nCurrent model: {self.bot.model}"
+        )
+
+    async def set_model(self, update: Update, context: CallbackContext) -> None:
+        """Set the model used for OpenAI requests."""
+        if not context.args:
+            await self.list_models(update, context)
+            return
+        model = context.args[0]
+        if model not in self.available_models:
+            await update.message.reply_text(f"Model {model} not available.")
+            return
+        self.bot.model = model
+        for b in self.bots.values():
+            b.model = model
+        await update.message.reply_text(f"Model set to {model}.")
+
     async def start_consilium(self, update: Update, context: CallbackContext) -> None:
         """Enable medical consilium mode for the chat."""
         chat_id = update.effective_chat.id
-        self.bots[chat_id] = OpenAIBot(settings.CONSILIUM_ASSISTANTS)
+        self.bots[chat_id] = OpenAIBot(settings.CONSILIUM_ASSISTANTS, model=self.bot.model)
         await update.message.reply_text("Consilium started.")
 
     async def stop_consilium(self, update: Update, context: CallbackContext) -> None:
