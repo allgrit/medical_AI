@@ -66,11 +66,11 @@ if str(package_root) not in sys.path:
 import bot.settings as settings
 
 
-def _is_chat_model(model: str) -> bool:
+def _is_chat_model(model: str | None) -> bool:
     """Return True if the model uses the chat completion API."""
     if not model:
         return True
-    name = model.lower()
+    name = str(model).lower().strip()
     if name.startswith("gpt-") and "-instruct" not in name:
         return True
     if name.startswith("claude"):
@@ -97,19 +97,20 @@ def _create_chat_completion(**kwargs):
     """Call the correct OpenAI completion method across library versions."""
     model = kwargs.get("model")
     if _is_chat_model(model):
+        # Newer ``openai`` versions expose ``openai.chat.completions``.
         if hasattr(openai, "chat") and hasattr(openai.chat, "completions"):
             return openai.chat.completions.create(**kwargs)
+        # Fall back to the legacy ``ChatCompletion`` class.
         return openai.ChatCompletion.create(**kwargs)
-    else:
-        if hasattr(openai, "completions"):
-            if "messages" in kwargs:
-                kwargs = kwargs.copy()
-                kwargs["prompt"] = _messages_to_prompt(kwargs.pop("messages"))
-            return openai.completions.create(**kwargs)
-        if "messages" in kwargs:
-            kwargs = kwargs.copy()
-            kwargs["prompt"] = _messages_to_prompt(kwargs.pop("messages"))
-        return openai.Completion.create(**kwargs)
+
+    # Non-chat models
+    if "messages" in kwargs:
+        kwargs = kwargs.copy()
+        kwargs["prompt"] = _messages_to_prompt(kwargs.pop("messages"))
+
+    if hasattr(openai, "completions"):
+        return openai.completions.create(**kwargs)
+    return openai.Completion.create(**kwargs)
 
 
 logger = logging.getLogger(__name__)
