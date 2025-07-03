@@ -125,12 +125,12 @@ class OpenAIBot:
 
     def ask(
         self, content: Union[str, List[dict]], conversation: Optional[List[dict]] = None
-    ) -> str:
+    ) -> Union[str, List[tuple[str, str]]]:
         if conversation is None:
             conversation = []
         conversation.append({"role": "user", "content": content})
 
-        results = []
+        results: List[tuple[str, str]] = []
         for assistant in self.assistants:
             reply = self._query_assistant(conversation, assistant)
             results.append((assistant.role, reply))
@@ -138,7 +138,7 @@ class OpenAIBot:
         if len(results) == 1:
             return results[0][1]
 
-        return "\n\n".join(f"{role}: {text}" for role, text in results)
+        return results
 
 
 class TelegramBot:
@@ -320,7 +320,11 @@ class TelegramBot:
             self.conversations[chat_id] = conversation[
                 -settings.CONTEXT_WINDOW_MESSAGES :
             ]
-        await self._send_chunks(message.reply_text, reply)
+        if isinstance(reply, list):
+            for role, text_part in reply:
+                await self._send_chunks(message.reply_text, f"{role}: {text_part}")
+        else:
+            await self._send_chunks(message.reply_text, reply)
 
     async def _process_media_group(self, group_id: str, context: CallbackContext) -> None:
         await asyncio.sleep(1)
@@ -366,10 +370,12 @@ class TelegramBot:
         reply = bot.ask(
             content if len(content) > 1 else content[0]["text"] if content else ""
         )
-        await self._send_chunks(
-            lambda t: context.bot.send_message(chat_id=messages[0].chat_id, text=t),
-            reply,
-        )
+        send_func = lambda t: context.bot.send_message(chat_id=messages[0].chat_id, text=t)
+        if isinstance(reply, list):
+            for role, text_part in reply:
+                await self._send_chunks(send_func, f"{role}: {text_part}")
+        else:
+            await self._send_chunks(send_func, reply)
 
     def run(self) -> None:
         logger.info("Starting bot")

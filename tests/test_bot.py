@@ -36,7 +36,7 @@ def test_openai_bot_sequential(monkeypatch):
     monkeypatch.setattr("bot.bot._create_chat_completion", fake_create)
     bot_instance = OpenAIBot()
     reply = bot_instance.ask("hello")
-    assert reply == "assistant1: first\n\nassistant2: second"
+    assert reply == [("assistant1", "first"), ("assistant2", "second")]
 
 
 def test_openai_bot_image(monkeypatch):
