@@ -123,6 +123,18 @@ class OpenAIBot:
         conversation.append({"role": assistant.role, "content": content})
         return content
 
+    def ask_stream(
+        self, content: Union[str, List[dict]], conversation: Optional[List[dict]] = None
+    ) -> Iterable[tuple[str, str]]:
+        """Yield replies from assistants sequentially as they are produced."""
+        if conversation is None:
+            conversation = []
+        conversation.append({"role": "user", "content": content})
+
+        for assistant in self.assistants:
+            reply = self._query_assistant(conversation, assistant)
+            yield assistant.role, reply
+
     def ask(
         self, content: Union[str, List[dict]], conversation: Optional[List[dict]] = None
     ) -> Union[str, List[tuple[str, str]]]:
@@ -315,16 +327,13 @@ class TelegramBot:
             content = text
 
         bot = self.bots.get(chat_id, self.bot)
-        reply = bot.ask(content, conversation)
-        if len(conversation) > settings.CONTEXT_WINDOW_MESSAGES:
-            self.conversations[chat_id] = conversation[
-                -settings.CONTEXT_WINDOW_MESSAGES :
-            ]
-        if isinstance(reply, list):
-            for role, text_part in reply:
-                await self._send_chunks(message.reply_text, f"{role}: {text_part}")
-        else:
-            await self._send_chunks(message.reply_text, reply)
+        for role, text_part in bot.ask_stream(content, conversation):
+            if len(conversation) > settings.CONTEXT_WINDOW_MESSAGES:
+                self.conversations[chat_id] = conversation[
+                    -settings.CONTEXT_WINDOW_MESSAGES :
+                ]
+            prefix = f"{role}: " if len(bot.assistants) > 1 else ""
+            await self._send_chunks(message.reply_text, prefix + text_part)
 
     async def _process_media_group(self, group_id: str, context: CallbackContext) -> None:
         await asyncio.sleep(1)
@@ -367,15 +376,12 @@ class TelegramBot:
                 content.insert(0, {"type": "text", "text": "[" + text_part + "]"})
 
         bot = self.bots.get(messages[0].chat_id, self.bot)
-        reply = bot.ask(
-            content if len(content) > 1 else content[0]["text"] if content else ""
-        )
         send_func = lambda t: context.bot.send_message(chat_id=messages[0].chat_id, text=t)
-        if isinstance(reply, list):
-            for role, text_part in reply:
-                await self._send_chunks(send_func, f"{role}: {text_part}")
-        else:
-            await self._send_chunks(send_func, reply)
+        for role, text_part in bot.ask_stream(
+            content if len(content) > 1 else content[0]["text"] if content else ""
+        ):
+            prefix = f"{role}: " if len(bot.assistants) > 1 else ""
+            await self._send_chunks(send_func, prefix + text_part)
 
     def run(self) -> None:
         logger.info("Starting bot")

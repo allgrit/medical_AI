@@ -35,7 +35,7 @@ def test_openai_bot_sequential(monkeypatch):
 
     monkeypatch.setattr("bot.bot._create_chat_completion", fake_create)
     bot_instance = OpenAIBot()
-    reply = bot_instance.ask("hello")
+    reply = list(bot_instance.ask_stream("hello"))
     assert reply == [("assistant1", "first"), ("assistant2", "second")]
 
 
@@ -105,7 +105,9 @@ def test_telegram_bot_album(monkeypatch):
                 self.chat_id = 1
 
         bot_instance = TelegramBot()
-        monkeypatch.setattr(bot_instance.bot, "ask", lambda c: "album")
+        monkeypatch.setattr(
+            bot_instance.bot, "ask_stream", lambda c: iter([("assistant", "album")])
+        )
 
         async def send_message(chat_id, text):
             responses.append(text)
@@ -140,7 +142,9 @@ def test_telegram_bot_document_group(monkeypatch):
         async def dummy_read(d):
             return "doc", []
         monkeypatch.setattr(bot_instance, "_read_document_text", dummy_read)
-        monkeypatch.setattr(bot_instance.bot, "ask", lambda c: "docs")
+        monkeypatch.setattr(
+            bot_instance.bot, "ask_stream", lambda c: iter([("assistant", "docs")])
+        )
 
         async def send_message(chat_id, text):
             responses.append(text)
@@ -179,11 +183,11 @@ def test_telegram_bot_single_document(monkeypatch):
             return "some text", []
         monkeypatch.setattr(bot_instance, "_read_document_text", dummy_read)
 
-        def fake_ask(content, conv):
+        def fake_stream(content, conv):
             assert "some text" in content
-            return "ok"
+            return iter([("assistant", "ok")])
 
-        monkeypatch.setattr(bot_instance.bot, "ask", fake_ask)
+        monkeypatch.setattr(bot_instance.bot, "ask_stream", fake_stream)
         update = types.SimpleNamespace(message=DummyMessage(), effective_chat=types.SimpleNamespace(id=1))
         ctx = types.SimpleNamespace(application=types.SimpleNamespace(create_task=lambda c: None))
         await bot_instance.handle_message(update, ctx)
@@ -297,7 +301,9 @@ def test_consilium_mode(monkeypatch):
         bot_instance = TelegramBot()
 
         # default bot reply
-        monkeypatch.setattr(bot_instance.bot, "ask", lambda c, conv=None: "default")
+        monkeypatch.setattr(
+            bot_instance.bot, "ask_stream", lambda c, conv=None: iter([("assistant", "default")])
+        )
 
         update = types.SimpleNamespace(message=DummyMessage(), effective_chat=types.SimpleNamespace(id=1))
         ctx = types.SimpleNamespace(application=types.SimpleNamespace(create_task=lambda c: None))
@@ -305,9 +311,11 @@ def test_consilium_mode(monkeypatch):
         await bot_instance.start_consilium(update, ctx)
         assert 1 in bot_instance.bots
 
-        monkeypatch.setattr(bot_instance.bots[1], "ask", lambda c, conv=None: "consilium")
+        monkeypatch.setattr(
+            bot_instance.bots[1], "ask_stream", lambda c, conv=None: iter([("doctor", "consilium")])
+        )
         await bot_instance.handle_message(update, ctx)
-        assert responses[-1] == "consilium"
+        assert responses[-1] == "doctor: consilium"
 
         await bot_instance.stop_consilium(update, ctx)
         assert 1 not in bot_instance.bots
