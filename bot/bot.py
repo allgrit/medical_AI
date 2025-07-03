@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import List, Union, Iterable, Optional
+from typing import List, Union, Iterable, Optional, Type
 import base64
 import asyncio
 from types import SimpleNamespace
@@ -100,22 +100,34 @@ class Assistant:
     system_prompt: str
 
 
-class OpenAIBot:
+class BaseBot:
+    """Abstract bot interface."""
+
     def __init__(
         self, assistants: List[Assistant | dict] | None = None, model: str | None = None
     ) -> None:
-        if assistants is None:
-            assistants = settings.ASSISTANTS
-
         self.assistants = [
-            a
-            if isinstance(a, Assistant)
-            else Assistant(role=a["role"], system_prompt=a["system_prompt"])
-            for a in assistants
+            a if isinstance(a, Assistant) else Assistant(role=a["role"], system_prompt=a["system_prompt"])
+            for a in (assistants or settings.ASSISTANTS)
         ]
-
         self.model = model or settings.MODEL
 
+    def ask_stream(
+        self, content: Union[str, List[dict]], conversation: Optional[List[dict]] = None
+    ) -> Iterable[tuple[str, str]]:
+        raise NotImplementedError
+
+    def ask(
+        self, content: Union[str, List[dict]], conversation: Optional[List[dict]] = None
+    ) -> Union[str, List[tuple[str, str]]]:
+        raise NotImplementedError
+
+
+class OpenAIBot(BaseBot):
+    def __init__(
+        self, assistants: List[Assistant | dict] | None = None, model: str | None = None
+    ) -> None:
+        super().__init__(assistants, model)
         setup_openai()
 
     def _query_assistant(self, conversation: List[dict], assistant: Assistant) -> str:
@@ -161,8 +173,43 @@ class OpenAIBot:
         return results
 
 
+class MidjourneyBot(BaseBot):
+    """Placeholder bot for Midjourney integration."""
+
+    def ask_stream(
+        self, content: Union[str, List[dict]], conversation: Optional[List[dict]] = None
+    ) -> Iterable[tuple[str, str]]:
+        yield "midjourney", "[Midjourney integration not implemented]"
+
+    def ask(
+        self, content: Union[str, List[dict]], conversation: Optional[List[dict]] = None
+    ) -> Union[str, List[tuple[str, str]]]:
+        return "[Midjourney integration not implemented]"
+
+
+class ClaudeBot(BaseBot):
+    """Placeholder bot for Claude.ai integration."""
+
+    def ask_stream(
+        self, content: Union[str, List[dict]], conversation: Optional[List[dict]] = None
+    ) -> Iterable[tuple[str, str]]:
+        yield "claude", "[Claude.ai integration not implemented]"
+
+    def ask(
+        self, content: Union[str, List[dict]], conversation: Optional[List[dict]] = None
+    ) -> Union[str, List[tuple[str, str]]]:
+        return "[Claude.ai integration not implemented]"
+
+
+BOT_TYPES: dict[str, Type[BaseBot]] = {
+    "openai": OpenAIBot,
+    "midjourney": MidjourneyBot,
+    "claude": ClaudeBot,
+}
+
+
 class TelegramBot:
-    def __init__(self) -> None:
+    def __init__(self, bot_name: str | None = None) -> None:
         """Initialize the bot and Telegram application.
 
         The real Telegram objects are only constructed if the library is
@@ -186,16 +233,26 @@ class TelegramBot:
             self.application.add_handler(CommandHandler("stopconsilium", self.stop_consilium))
             self.application.add_handler(CommandHandler("models", self.list_models))
             self.application.add_handler(CommandHandler("model", self.set_model))
+            self.application.add_handler(CommandHandler("bots", self.list_bots))
+            self.application.add_handler(CommandHandler("bot", self.set_bot))
             self.application.add_handler(CallbackQueryHandler(self.handle_callback))
             self.application.add_handler(MessageHandler(filters.ALL, self.handle_message))
 
-        # Configure OpenAI before making any API requests
-        setup_openai()
+        self.available_bots = list(BOT_TYPES.keys())
+        self.bot_name = bot_name or getattr(settings, "DEFAULT_BOT", "openai")
+        if self.bot_name not in self.available_bots:
+            self.bot_name = "openai"
 
-        self.available_models = self._fetch_models()
-        self.bot = OpenAIBot(model=settings.MODEL)
+        if self.bot_name == "openai":
+            setup_openai()
+            self.available_models = self._fetch_models()
+        else:
+            self.available_models = []
+
+        bot_class = BOT_TYPES[self.bot_name]
+        self.bot: BaseBot = bot_class(model=settings.MODEL)
         # Per-chat specialized bots, used for the consilium mode
-        self.bots: dict[int, OpenAIBot] = {}
+        self.bots: dict[int, BaseBot] = {}
 
         self.conversations: dict[int, List[dict]] = {}
         # Keep track of incoming media groups so that albums can be processed as
@@ -271,6 +328,7 @@ class TelegramBot:
             [InlineKeyboardButton("Start consilium", callback_data="start_consilium")],
             [InlineKeyboardButton("Stop consilium", callback_data="stop_consilium")],
             [InlineKeyboardButton("Select model", callback_data="choose_model")],
+            [InlineKeyboardButton("Select bot", callback_data="choose_bot")],
         ]
         return InlineKeyboardMarkup(keyboard)
 
@@ -278,6 +336,14 @@ class TelegramBot:
         keyboard = [
             [InlineKeyboardButton(m, callback_data=f"set_model:{m}")]
             for m in self.available_models
+        ]
+        keyboard.append([InlineKeyboardButton("Back", callback_data="back_main")])
+        return InlineKeyboardMarkup(keyboard)
+
+    def _bot_menu(self):
+        keyboard = [
+            [InlineKeyboardButton(b, callback_data=f"set_bot:{b}")]
+            for b in self.available_bots
         ]
         keyboard.append([InlineKeyboardButton("Back", callback_data="back_main")])
         return InlineKeyboardMarkup(keyboard)
@@ -295,12 +361,21 @@ class TelegramBot:
             await query.edit_message_reply_markup(reply_markup=self._main_menu())
         elif data == "choose_model":
             await query.edit_message_text("Select model:", reply_markup=self._model_menu())
+        elif data == "choose_bot":
+            await query.edit_message_text("Select bot:", reply_markup=self._bot_menu())
         elif data.startswith("set_model:"):
             model = data.split(":", 1)[1]
             context.args = [model]
             await self.set_model(update, context)
             await query.edit_message_text(
                 f"Model set to {model}", reply_markup=self._main_menu()
+            )
+        elif data.startswith("set_bot:"):
+            bot_name = data.split(":", 1)[1]
+            context.args = [bot_name]
+            await self.set_bot(update, context)
+            await query.edit_message_text(
+                f"Bot set to {bot_name}", reply_markup=self._main_menu()
             )
         elif data == "back_main":
             await query.edit_message_text("Choose an action:", reply_markup=self._main_menu())
@@ -339,10 +414,36 @@ class TelegramBot:
         msg = getattr(update, "message", None) or update.callback_query.message
         await msg.reply_text(f"Model set to {model}.")
 
+    async def list_bots(self, update: Update, context: CallbackContext) -> None:
+        """List available bot backends and show the current selection."""
+        await update.message.reply_text(
+            "Available bots: "
+            + ", ".join(self.available_bots)
+            + f"\nCurrent bot: {self.bot_name}"
+        )
+
+    async def set_bot(self, update: Update, context: CallbackContext) -> None:
+        if not context.args:
+            await self.list_bots(update, context)
+            return
+        bot_name = context.args[0]
+        if bot_name not in self.available_bots:
+            msg = getattr(update, "message", None) or update.callback_query.message
+            await msg.reply_text(f"Bot {bot_name} not available.")
+            return
+        self.bot_name = bot_name
+        bot_class = BOT_TYPES[bot_name]
+        self.bot = bot_class(model=self.bot.model)
+        for chat_id in list(self.bots.keys()):
+            self.bots[chat_id] = bot_class(settings.CONSILIUM_ASSISTANTS, model=self.bot.model)
+        msg = getattr(update, "message", None) or update.callback_query.message
+        await msg.reply_text(f"Bot set to {bot_name}.")
+
     async def start_consilium(self, update: Update, context: CallbackContext) -> None:
         """Enable medical consilium mode for the chat."""
         chat_id = update.effective_chat.id
-        self.bots[chat_id] = OpenAIBot(settings.CONSILIUM_ASSISTANTS, model=self.bot.model)
+        bot_class = type(self.bot)
+        self.bots[chat_id] = bot_class(settings.CONSILIUM_ASSISTANTS, model=self.bot.model)
         msg = getattr(update, "message", None) or update.callback_query.message
         await msg.reply_text("Consilium started.")
 

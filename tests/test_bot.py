@@ -362,3 +362,25 @@ def test_model_selection(monkeypatch):
 
     asyncio.run(run())
 
+
+def test_bot_selection(monkeypatch):
+    async def run():
+        responses = []
+
+        bot_instance = TelegramBot()
+
+        class DummyMessage:
+            async def reply_text(self, text):
+                responses.append(text)
+
+        update = types.SimpleNamespace(
+            message=DummyMessage(), effective_chat=types.SimpleNamespace(id=1)
+        )
+        ctx = types.SimpleNamespace(args=["claude"])
+        await bot_instance.set_bot(update, ctx)
+
+        assert bot_instance.bot_name == "claude"
+        assert responses[-1].startswith("Bot set to claude")
+
+    asyncio.run(run())
+
