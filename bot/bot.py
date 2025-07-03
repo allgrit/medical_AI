@@ -193,14 +193,26 @@ class TelegramBot:
                         tmp.write(data)
                     try:
                         result = subprocess.run(
-                            ["antiword", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+                            ["antiword", path],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            check=True,
                         )
                         text = result.stdout.decode("utf-8", errors="ignore")
                     except FileNotFoundError:
-                        logger.error("antiword not found - cannot extract .doc text")
+                        logger.error(
+                            "antiword not found - cannot extract .doc text"
+                        )
                         return "", []
                 finally:
-                    os.unlink(path)
+                    try:
+                        os.unlink(path)
+                    except PermissionError:
+                        logger.warning(
+                            "Failed to delete temporary file %s", path
+                        )
+                    except FileNotFoundError:  # pragma: no cover - already deleted
+                        pass
             elif name.endswith(".xlsx"):
                 wb = openpyxl.load_workbook(BytesIO(data), read_only=True, data_only=True)
                 rows = []
