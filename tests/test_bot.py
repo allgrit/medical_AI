@@ -5,9 +5,25 @@ import openpyxl
 import docx
 import mammoth
 import os
+import pytest
 
 import bot.settings as settings
 from bot.bot import OpenAIBot, setup_openai, TelegramBot
+
+
+@pytest.fixture(autouse=True)
+def _patch_openai(monkeypatch):
+    models_resp = types.SimpleNamespace(
+        data=[types.SimpleNamespace(id="m1"), types.SimpleNamespace(id="m2")]
+    )
+    fake_openai = types.SimpleNamespace(
+        api_key=None,
+        Model=types.SimpleNamespace(list=lambda: models_resp),
+        chat=types.SimpleNamespace(
+            completions=types.SimpleNamespace(create=lambda **k: None)
+        ),
+    )
+    monkeypatch.setattr("bot.bot.openai", fake_openai)
 
 
 def test_setup_openai(monkeypatch):
@@ -321,6 +337,28 @@ def test_consilium_mode(monkeypatch):
         assert 1 not in bot_instance.bots
         await bot_instance.handle_message(update, ctx)
         assert responses[-1] == "default"
+
+    asyncio.run(run())
+
+
+def test_model_selection(monkeypatch):
+    async def run():
+        responses = []
+
+        bot_instance = TelegramBot()
+
+        class DummyMessage:
+            async def reply_text(self, text):
+                responses.append(text)
+
+        update = types.SimpleNamespace(
+            message=DummyMessage(), effective_chat=types.SimpleNamespace(id=1)
+        )
+        ctx = types.SimpleNamespace(args=["m2"])
+        await bot_instance.set_model(update, ctx)
+
+        assert bot_instance.bot.model == "m2"
+        assert responses[-1].startswith("Model set to m2")
 
     asyncio.run(run())
 
