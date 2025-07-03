@@ -75,6 +75,8 @@ def _is_chat_model(model: str | None) -> bool:
         return True
     if name.startswith("claude"):
         return True
+    if name.startswith("o4"):
+        return True
     return False
 
 
