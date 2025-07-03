@@ -38,17 +38,21 @@ except Exception:  # pragma: no cover - handled in tests
     )
 
 try:
-    from telegram import Update
+    from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
     from telegram.ext import (
         ApplicationBuilder,
         CommandHandler,
         MessageHandler,
+        CallbackQueryHandler,
         filters,
         CallbackContext,
     )
 except Exception:  # pragma: no cover - telegram not available in tests
     Update = CallbackContext = object
     filters = SimpleNamespace(ALL=None)
+    InlineKeyboardMarkup = lambda *a, **k: None
+    InlineKeyboardButton = lambda *a, **k: None
+    CallbackQueryHandler = lambda *a, **k: None
     ApplicationBuilder = CommandHandler = MessageHandler = SimpleNamespace
 
 # Allow running the script directly by ensuring the package root is on sys.path
@@ -182,6 +186,7 @@ class TelegramBot:
             self.application.add_handler(CommandHandler("stopconsilium", self.stop_consilium))
             self.application.add_handler(CommandHandler("models", self.list_models))
             self.application.add_handler(CommandHandler("model", self.set_model))
+            self.application.add_handler(CallbackQueryHandler(self.handle_callback))
             self.application.add_handler(MessageHandler(filters.ALL, self.handle_message))
 
         self.available_models = self._fetch_models()
@@ -258,10 +263,48 @@ class TelegramBot:
             return "", []
         return text[: settings.DOC_MAX_CHARS], images
 
+    def _main_menu(self):
+        keyboard = [
+            [InlineKeyboardButton("Start consilium", callback_data="start_consilium")],
+            [InlineKeyboardButton("Stop consilium", callback_data="stop_consilium")],
+            [InlineKeyboardButton("Select model", callback_data="choose_model")],
+        ]
+        return InlineKeyboardMarkup(keyboard)
+
+    def _model_menu(self):
+        keyboard = [
+            [InlineKeyboardButton(m, callback_data=f"set_model:{m}")]
+            for m in self.available_models
+        ]
+        keyboard.append([InlineKeyboardButton("Back", callback_data="back_main")])
+        return InlineKeyboardMarkup(keyboard)
+
+    async def handle_callback(self, update: Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        data = query.data
+        await getattr(query, "answer", lambda *a, **k: None)()
+
+        if data == "start_consilium":
+            await self.start_consilium(update, context)
+            await query.edit_message_reply_markup(reply_markup=self._main_menu())
+        elif data == "stop_consilium":
+            await self.stop_consilium(update, context)
+            await query.edit_message_reply_markup(reply_markup=self._main_menu())
+        elif data == "choose_model":
+            await query.edit_message_text("Select model:", reply_markup=self._model_menu())
+        elif data.startswith("set_model:"):
+            model = data.split(":", 1)[1]
+            context.args = [model]
+            await self.set_model(update, context)
+            await query.edit_message_text(
+                f"Model set to {model}", reply_markup=self._main_menu()
+            )
+        elif data == "back_main":
+            await query.edit_message_text("Choose an action:", reply_markup=self._main_menu())
+
     async def start(self, update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(
-            "Hello! Send me a message and I will respond using OpenAI. "
-            "Use /consilium to start a medical consilium and /stopconsilium to end it."
+            "Hello! Choose an action:", reply_markup=self._main_menu()
         )
 
     async def clear(self, update: Update, context: CallbackContext) -> None:
@@ -284,24 +327,28 @@ class TelegramBot:
             return
         model = context.args[0]
         if model not in self.available_models:
-            await update.message.reply_text(f"Model {model} not available.")
+            msg = getattr(update, "message", None) or update.callback_query.message
+            await msg.reply_text(f"Model {model} not available.")
             return
         self.bot.model = model
         for b in self.bots.values():
             b.model = model
-        await update.message.reply_text(f"Model set to {model}.")
+        msg = getattr(update, "message", None) or update.callback_query.message
+        await msg.reply_text(f"Model set to {model}.")
 
     async def start_consilium(self, update: Update, context: CallbackContext) -> None:
         """Enable medical consilium mode for the chat."""
         chat_id = update.effective_chat.id
         self.bots[chat_id] = OpenAIBot(settings.CONSILIUM_ASSISTANTS, model=self.bot.model)
-        await update.message.reply_text("Consilium started.")
+        msg = getattr(update, "message", None) or update.callback_query.message
+        await msg.reply_text("Consilium started.")
 
     async def stop_consilium(self, update: Update, context: CallbackContext) -> None:
         """Disable medical consilium mode for the chat."""
         chat_id = update.effective_chat.id
         self.bots.pop(chat_id, None)
-        await update.message.reply_text("Consilium stopped.")
+        msg = getattr(update, "message", None) or update.callback_query.message
+        await msg.reply_text("Consilium stopped.")
 
     async def handle_message(self, update: Update, context: CallbackContext) -> None:
         message = update.message
