@@ -33,4 +33,13 @@ CONSILIUM_ASSISTANTS = [
             "improvements."
         ),
     },
+    {
+        "role": "doctor_final",
+        "system_prompt": (
+            "You are the same doctor addressing the critic's comments. "
+            "Provide a concise response to the critique and formulate "
+            "final thoughts and recommendations based on all prior "
+            "messages and any provided documents."
+        ),
+    },
 ]
