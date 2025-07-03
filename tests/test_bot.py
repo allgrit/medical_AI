@@ -9,6 +9,7 @@ import pytest
 
 import bot.settings as settings
 from bot.bot import OpenAIBot, setup_openai, TelegramBot
+from bot.bot import _is_chat_model
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +33,11 @@ def test_setup_openai(monkeypatch):
     monkeypatch.setattr("bot.bot.openai", fake_openai)
     setup_openai()
     assert fake_openai.api_key == "key"
+
+
+def test_is_chat_model_o4():
+    assert _is_chat_model("o4-mini")
+    assert not _is_chat_model("gpt-3.5-instruct")
 
 
 def test_openai_bot_sequential(monkeypatch):
