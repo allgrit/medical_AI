@@ -66,22 +66,42 @@ if str(package_root) not in sys.path:
 import bot.settings as settings
 
 
+def _is_chat_model(model: str) -> bool:
+    """Return True if the model uses the chat completion API."""
+    if not model:
+        return True
+    name = model.lower()
+    if name.startswith("gpt-") and "-instruct" not in name:
+        return True
+    if name.startswith("claude"):
+        return True
+    return False
+
+
 def _create_chat_completion(**kwargs):
     """Call the correct OpenAI completion method across library versions."""
-    try:
-        if hasattr(openai, "chat") and hasattr(openai.chat, "completions"):
-            return openai.chat.completions.create(**kwargs)
-        return openai.ChatCompletion.create(**kwargs)
-    except getattr(openai, "NotFoundError", Exception) as exc:  # pragma: no cover - depends on openai
-        # Some providers like OpenRouter require the ``/v1/responses`` endpoint
-        # for certain models. Fall back to that if available and the error
-        # message suggests it.
-        if "v1/responses" in str(exc) and hasattr(openai, "responses"):
-            try:
-                return openai.responses.create(**kwargs)
-            except Exception:
-                pass
-        raise
+    model = kwargs.get("model")
+    if _is_chat_model(model):
+        try:
+            if hasattr(openai, "chat") and hasattr(openai.chat, "completions"):
+                return openai.chat.completions.create(**kwargs)
+            return openai.ChatCompletion.create(**kwargs)
+        except getattr(openai, "NotFoundError", Exception) as exc:  # pragma: no cover - depends on openai
+            # Some providers like OpenRouter require the ``/v1/responses`` endpoint
+            # for certain models. Fall back to that if available and the error
+            # message suggests it.
+            if "v1/responses" in str(exc) and hasattr(openai, "responses"):
+                try:
+                    return openai.responses.create(**kwargs)
+                except Exception:
+                    pass
+            raise
+    else:
+        if hasattr(openai, "responses"):
+            return openai.responses.create(**kwargs)
+        if hasattr(openai, "completions"):
+            return openai.completions.create(**kwargs)
+        return openai.Completion.create(**kwargs)
 
 
 logger = logging.getLogger(__name__)
