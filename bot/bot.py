@@ -184,6 +184,9 @@ class TelegramBot:
             self.application.add_handler(CommandHandler("model", self.set_model))
             self.application.add_handler(MessageHandler(filters.ALL, self.handle_message))
 
+        # Configure OpenAI before making any API requests
+        setup_openai()
+
         self.available_models = self._fetch_models()
         self.bot = OpenAIBot(model=settings.MODEL)
         # Per-chat specialized bots, used for the consilium mode
