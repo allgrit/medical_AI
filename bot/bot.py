@@ -198,10 +198,10 @@ class TelegramBot:
     def _fetch_models(self) -> List[str]:
         """Return available OpenAI models or the default model if lookup fails."""
         try:
-            if hasattr(openai, "Model"):
-                resp = openai.Model.list()
-            else:
+            if hasattr(openai, "models"):
                 resp = openai.models.list()
+            else:
+                resp = openai.Model.list()
             data = resp.get("data", []) if isinstance(resp, dict) else getattr(resp, "data", [])
             models = [m.get("id") if isinstance(m, dict) else getattr(m, "id", None) for m in data]
             return [m for m in models if m]
