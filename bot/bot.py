@@ -68,9 +68,23 @@ import bot.settings as settings
 
 def _create_chat_completion(**kwargs):
     """Call the correct OpenAI completion method across library versions."""
-    if hasattr(openai, "chat") and hasattr(openai.chat, "completions"):
-        return openai.chat.completions.create(**kwargs)
-    return openai.ChatCompletion.create(**kwargs)
+    try:
+        if hasattr(openai, "chat") and hasattr(openai.chat, "completions"):
+            return openai.chat.completions.create(**kwargs)
+        return openai.ChatCompletion.create(**kwargs)
+    except getattr(openai, "NotFoundError", Exception) as exc:  # pragma: no cover - depends on openai
+        # Some providers like OpenRouter require the ``/v1/responses`` endpoint
+        # for certain models. Fall back to that if available and the error
+        # message suggests it.
+        if "v1/responses" in str(exc) and hasattr(openai, "responses"):
+            try:
+                if "messages" in kwargs:
+                    kwargs = dict(kwargs)
+                    kwargs["input"] = kwargs.pop("messages")
+                return openai.responses.create(**kwargs)
+            except Exception:
+                pass
+        raise
 
 
 logger = logging.getLogger(__name__)
