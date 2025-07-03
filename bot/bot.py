@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import inspect
 from dataclasses import dataclass
 from typing import List, Union, Iterable, Optional, Type
 import base64
@@ -78,6 +79,21 @@ def _is_chat_model(model: str) -> bool:
     return False
 
 
+def _messages_to_prompt(messages: List[dict]) -> str:
+    """Convert chat messages into a plain prompt."""
+    parts = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content", "")
+        if role == "system":
+            parts.append(content.strip())
+        elif role == "user":
+            parts.append(f"User: {content}")
+        else:
+            parts.append(f"Assistant: {content}")
+    return "\n".join(parts)
+
+
 def _create_chat_completion(**kwargs):
     """Call the correct OpenAI completion method across library versions."""
     model = kwargs.get("model")
@@ -92,15 +108,31 @@ def _create_chat_completion(**kwargs):
             # message suggests it.
             if "v1/responses" in str(exc) and hasattr(openai, "responses"):
                 try:
+                    if "messages" in kwargs:
+                        sig = inspect.signature(openai.responses.create)
+                        if "messages" not in sig.parameters:
+                            kwargs = kwargs.copy()
+                            kwargs["prompt"] = _messages_to_prompt(kwargs.pop("messages"))
                     return openai.responses.create(**kwargs)
                 except Exception:
                     pass
             raise
     else:
         if hasattr(openai, "responses"):
+            if "messages" in kwargs:
+                sig = inspect.signature(openai.responses.create)
+                if "messages" not in sig.parameters:
+                    kwargs = kwargs.copy()
+                    kwargs["prompt"] = _messages_to_prompt(kwargs.pop("messages"))
             return openai.responses.create(**kwargs)
         if hasattr(openai, "completions"):
+            if "messages" in kwargs:
+                kwargs = kwargs.copy()
+                kwargs["prompt"] = _messages_to_prompt(kwargs.pop("messages"))
             return openai.completions.create(**kwargs)
+        if "messages" in kwargs:
+            kwargs = kwargs.copy()
+            kwargs["prompt"] = _messages_to_prompt(kwargs.pop("messages"))
         return openai.Completion.create(**kwargs)
 
 
