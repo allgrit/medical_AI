@@ -9,6 +9,7 @@ import base64
 import asyncio
 from types import SimpleNamespace
 from io import BytesIO
+
 try:
     from pdfminer.high_level import extract_text
 except ImportError:  # pragma: no cover - older pdfminer versions
@@ -19,6 +20,8 @@ except ImportError:  # pragma: no cover - older pdfminer versions
         output = StringIO()
         extract_text_to_fp(file, output)
         return output.getvalue()
+
+
 import docx
 import openpyxl
 import xlrd
@@ -98,23 +101,39 @@ def _messages_to_prompt(messages: List[dict]) -> str:
 
 
 def _create_chat_completion(**kwargs):
-    """Call the correct OpenAI completion method across library versions."""
+    """Call the correct OpenAI completion method across library versions.
+
+    The logic first relies on :func:`_is_chat_model` to pick the appropriate
+    endpoint. If the call fails with a ``NotFoundError`` indicating the wrong
+    endpoint was used, it transparently retries using the alternative API.
+    """
+
     model = kwargs.get("model")
-    if _is_chat_model(model):
-        # Newer ``openai`` versions expose ``openai.chat.completions``.
+
+    def call_chat() -> object:
         if hasattr(openai, "chat") and hasattr(openai.chat, "completions"):
             return openai.chat.completions.create(**kwargs)
-        # Fall back to the legacy ``ChatCompletion`` class.
         return openai.ChatCompletion.create(**kwargs)
 
-    # Non-chat models
-    if "messages" in kwargs:
-        kwargs = kwargs.copy()
-        kwargs["prompt"] = _messages_to_prompt(kwargs.pop("messages"))
+    def call_completion() -> object:
+        params = kwargs.copy()
+        if "messages" in params:
+            params["prompt"] = _messages_to_prompt(params.pop("messages"))
+        if hasattr(openai, "completions"):
+            return openai.completions.create(**params)
+        return openai.Completion.create(**params)
 
-    if hasattr(openai, "completions"):
-        return openai.completions.create(**kwargs)
-    return openai.Completion.create(**kwargs)
+    use_chat = _is_chat_model(model)
+
+    try:
+        return call_chat() if use_chat else call_completion()
+    except openai.NotFoundError as e:
+        msg = str(e).lower()
+        if use_chat and "v1/responses" in msg:
+            return call_completion()
+        if not use_chat and "chat" in msg:
+            return call_chat()
+        raise
 
 
 logger = logging.getLogger(__name__)
@@ -151,7 +170,11 @@ class BaseBot:
         self, assistants: List[Assistant | dict] | None = None, model: str | None = None
     ) -> None:
         self.assistants = [
-            a if isinstance(a, Assistant) else Assistant(role=a["role"], system_prompt=a["system_prompt"])
+            (
+                a
+                if isinstance(a, Assistant)
+                else Assistant(role=a["role"], system_prompt=a["system_prompt"])
+            )
             for a in (assistants or settings.ASSISTANTS)
         ]
         self.model = model or settings.MODEL
@@ -270,17 +293,25 @@ class TelegramBot:
                 run_polling=lambda: None,
             )
         else:
-            self.application = ApplicationBuilder().token(settings.TELEGRAM_TOKEN).build()
+            self.application = (
+                ApplicationBuilder().token(settings.TELEGRAM_TOKEN).build()
+            )
             self.application.add_handler(CommandHandler("start", self.start))
             self.application.add_handler(CommandHandler("clear", self.clear))
-            self.application.add_handler(CommandHandler("consilium", self.start_consilium))
-            self.application.add_handler(CommandHandler("stopconsilium", self.stop_consilium))
+            self.application.add_handler(
+                CommandHandler("consilium", self.start_consilium)
+            )
+            self.application.add_handler(
+                CommandHandler("stopconsilium", self.stop_consilium)
+            )
             self.application.add_handler(CommandHandler("models", self.list_models))
             self.application.add_handler(CommandHandler("model", self.set_model))
             self.application.add_handler(CommandHandler("bots", self.list_bots))
             self.application.add_handler(CommandHandler("bot", self.set_bot))
             self.application.add_handler(CallbackQueryHandler(self.handle_callback))
-            self.application.add_handler(MessageHandler(filters.ALL, self.handle_message))
+            self.application.add_handler(
+                MessageHandler(filters.ALL, self.handle_message)
+            )
 
         self.available_bots = list(BOT_TYPES.keys())
         self.bot_name = bot_name or getattr(settings, "DEFAULT_BOT", "openai")
@@ -311,8 +342,15 @@ class TelegramBot:
                 resp = openai.models.list()
             else:
                 resp = openai.Model.list()
-            data = resp.get("data", []) if isinstance(resp, dict) else getattr(resp, "data", [])
-            models = [m.get("id") if isinstance(m, dict) else getattr(m, "id", None) for m in data]
+            data = (
+                resp.get("data", [])
+                if isinstance(resp, dict)
+                else getattr(resp, "data", [])
+            )
+            models = [
+                m.get("id") if isinstance(m, dict) else getattr(m, "id", None)
+                for m in data
+            ]
             return [m for m in models if m]
         except Exception as exc:  # pragma: no cover - network issues
             logger.exception("Failed to fetch models: %s", exc)
@@ -339,14 +377,14 @@ class TelegramBot:
                 )
                 html = result.value
                 tree = lxml.html.fromstring(html)
-                text = "\n".join(
-                    t.strip() for t in tree.xpath("//text()") if t.strip()
-                )
+                text = "\n".join(t.strip() for t in tree.xpath("//text()") if t.strip())
                 images = tree.xpath("//img/@src")
             elif name.endswith(".doc"):
                 text = _extract_doc_text(data)
             elif name.endswith(".xlsx"):
-                wb = openpyxl.load_workbook(BytesIO(data), read_only=True, data_only=True)
+                wb = openpyxl.load_workbook(
+                    BytesIO(data), read_only=True, data_only=True
+                )
                 rows = []
                 for ws in wb.worksheets:
                     for row in ws.iter_rows(values_only=True):
@@ -404,7 +442,9 @@ class TelegramBot:
             await self.stop_consilium(update, context)
             await query.edit_message_reply_markup(reply_markup=self._main_menu())
         elif data == "choose_model":
-            await query.edit_message_text("Select model:", reply_markup=self._model_menu())
+            await query.edit_message_text(
+                "Select model:", reply_markup=self._model_menu()
+            )
         elif data == "choose_bot":
             await query.edit_message_text("Select bot:", reply_markup=self._bot_menu())
         elif data.startswith("set_model:"):
@@ -422,7 +462,9 @@ class TelegramBot:
                 f"Bot set to {bot_name}", reply_markup=self._main_menu()
             )
         elif data == "back_main":
-            await query.edit_message_text("Choose an action:", reply_markup=self._main_menu())
+            await query.edit_message_text(
+                "Choose an action:", reply_markup=self._main_menu()
+            )
 
     async def start(self, update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(
@@ -479,7 +521,9 @@ class TelegramBot:
         bot_class = BOT_TYPES[bot_name]
         self.bot = bot_class(model=self.bot.model)
         for chat_id in list(self.bots.keys()):
-            self.bots[chat_id] = bot_class(settings.CONSILIUM_ASSISTANTS, model=self.bot.model)
+            self.bots[chat_id] = bot_class(
+                settings.CONSILIUM_ASSISTANTS, model=self.bot.model
+            )
         msg = getattr(update, "message", None) or update.callback_query.message
         await msg.reply_text(f"Bot set to {bot_name}.")
 
@@ -487,7 +531,9 @@ class TelegramBot:
         """Enable medical consilium mode for the chat."""
         chat_id = update.effective_chat.id
         bot_class = type(self.bot)
-        self.bots[chat_id] = bot_class(settings.CONSILIUM_ASSISTANTS, model=self.bot.model)
+        self.bots[chat_id] = bot_class(
+            settings.CONSILIUM_ASSISTANTS, model=self.bot.model
+        )
         msg = getattr(update, "message", None) or update.callback_query.message
         await msg.reply_text("Consilium started.")
 
@@ -528,23 +574,29 @@ class TelegramBot:
                 prefix = f"Content of {file_name}:\n"
                 text = f"{text}\n{prefix}{snippet}" if text else prefix + snippet
             else:
-                text = f"{text}\n[User attached file: {file_name}]" if text else f"[User attached file: {file_name}]"
+                text = (
+                    f"{text}\n[User attached file: {file_name}]"
+                    if text
+                    else f"[User attached file: {file_name}]"
+                )
             content = text
             if doc_images:
-                content = [
-                    {"type": "text", "text": text}
-                ] + [
+                content = [{"type": "text", "text": text}] + [
                     {"type": "image_url", "image_url": {"url": img}}
                     for img in doc_images
                 ]
 
         if message.photo:
             if message.media_group_id:
-                group = self._media_groups.setdefault(message.media_group_id, {"messages": [], "task": None})
+                group = self._media_groups.setdefault(
+                    message.media_group_id, {"messages": [], "task": None}
+                )
                 group["messages"].append(message)
                 if group["task"]:
                     group["task"].cancel()
-                group["task"] = context.application.create_task(self._process_media_group(message.media_group_id, context))
+                group["task"] = context.application.create_task(
+                    self._process_media_group(message.media_group_id, context)
+                )
                 return
             # Download largest size photo
             photo = message.photo[-1]
@@ -573,7 +625,9 @@ class TelegramBot:
             prefix = f"{role}: " if len(bot.assistants) > 1 else ""
             await self._send_chunks(message.reply_text, prefix + text_part)
 
-    async def _process_media_group(self, group_id: str, context: CallbackContext) -> None:
+    async def _process_media_group(
+        self, group_id: str, context: CallbackContext
+    ) -> None:
         await asyncio.sleep(1)
         group = self._media_groups.pop(group_id, None)
         if not group:
@@ -600,9 +654,17 @@ class TelegramBot:
                 doc_text, doc_images = await self._read_document_text(msg.document)
                 if doc_text:
                     if content and content[0]["type"] == "text":
-                        content[0]["text"] += f"\nContent of {msg.document.file_name}:\n{doc_text.strip()}"
+                        content[0][
+                            "text"
+                        ] += f"\nContent of {msg.document.file_name}:\n{doc_text.strip()}"
                     else:
-                        content.insert(0, {"type": "text", "text": f"Content of {msg.document.file_name}:\n{doc_text.strip()}"})
+                        content.insert(
+                            0,
+                            {
+                                "type": "text",
+                                "text": f"Content of {msg.document.file_name}:\n{doc_text.strip()}",
+                            },
+                        )
                 for img in doc_images:
                     content.append({"type": "image_url", "image_url": {"url": img}})
 
@@ -614,7 +676,9 @@ class TelegramBot:
                 content.insert(0, {"type": "text", "text": "[" + text_part + "]"})
 
         bot = self.bots.get(messages[0].chat_id, self.bot)
-        send_func = lambda t: context.bot.send_message(chat_id=messages[0].chat_id, text=t)
+        send_func = lambda t: context.bot.send_message(
+            chat_id=messages[0].chat_id, text=t
+        )
         for role, text_part in bot.ask_stream(
             content if len(content) > 1 else content[0]["text"] if content else ""
         ):
