@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import inspect
 from dataclasses import dataclass
 from typing import List, Union, Iterable, Optional, Type
 import base64
@@ -98,33 +97,10 @@ def _create_chat_completion(**kwargs):
     """Call the correct OpenAI completion method across library versions."""
     model = kwargs.get("model")
     if _is_chat_model(model):
-        try:
-            if hasattr(openai, "chat") and hasattr(openai.chat, "completions"):
-                return openai.chat.completions.create(**kwargs)
-            return openai.ChatCompletion.create(**kwargs)
-        except getattr(openai, "NotFoundError", Exception) as exc:  # pragma: no cover - depends on openai
-            # Some providers like OpenRouter require the ``/v1/responses`` endpoint
-            # for certain models. Fall back to that if available and the error
-            # message suggests it.
-            if "v1/responses" in str(exc) and hasattr(openai, "responses"):
-                try:
-                    if "messages" in kwargs:
-                        sig = inspect.signature(openai.responses.create)
-                        if "messages" not in sig.parameters:
-                            kwargs = kwargs.copy()
-                            kwargs["prompt"] = _messages_to_prompt(kwargs.pop("messages"))
-                    return openai.responses.create(**kwargs)
-                except Exception:
-                    pass
-            raise
+        if hasattr(openai, "chat") and hasattr(openai.chat, "completions"):
+            return openai.chat.completions.create(**kwargs)
+        return openai.ChatCompletion.create(**kwargs)
     else:
-        if hasattr(openai, "responses"):
-            if "messages" in kwargs:
-                sig = inspect.signature(openai.responses.create)
-                if "messages" not in sig.parameters:
-                    kwargs = kwargs.copy()
-                    kwargs["prompt"] = _messages_to_prompt(kwargs.pop("messages"))
-            return openai.responses.create(**kwargs)
         if hasattr(openai, "completions"):
             if "messages" in kwargs:
                 kwargs = kwargs.copy()
