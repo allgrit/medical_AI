@@ -78,6 +78,9 @@ def _create_chat_completion(**kwargs):
         # message suggests it.
         if "v1/responses" in str(exc) and hasattr(openai, "responses"):
             try:
+                if "messages" in kwargs:
+                    kwargs = dict(kwargs)
+                    kwargs["input"] = kwargs.pop("messages")
                 return openai.responses.create(**kwargs)
             except Exception:
                 pass
