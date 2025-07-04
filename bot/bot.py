@@ -343,6 +343,15 @@ class TelegramBot:
         # ``{"messages": [...], "task": asyncio.Task | None}``.
         self._media_groups: dict[str, dict] = {}
 
+    def _is_allowed(self, update: Update) -> bool:
+        """Return True if the user is allowed to interact with the bot."""
+        allowed = getattr(settings, "ALLOWED_TELEGRAM_IDS", [])
+        if not allowed:
+            return True
+        user = getattr(update, "effective_user", None)
+        user_id = getattr(user, "id", None)
+        return user_id in allowed
+
     def _fetch_models(self) -> List[str]:
         """Return available OpenAI models or the default model if lookup fails."""
         try:
@@ -439,6 +448,8 @@ class TelegramBot:
         return InlineKeyboardMarkup(keyboard)
 
     async def handle_callback(self, update: Update, context: CallbackContext) -> None:
+        if not self._is_allowed(update):
+            return
         query = update.callback_query
         data = query.data
         await getattr(query, "answer", lambda *a, **k: None)()
@@ -475,16 +486,22 @@ class TelegramBot:
             )
 
     async def start(self, update: Update, context: CallbackContext) -> None:
+        if not self._is_allowed(update):
+            return
         await update.message.reply_text(
             "Hello! Choose an action:", reply_markup=self._main_menu()
         )
 
     async def clear(self, update: Update, context: CallbackContext) -> None:
+        if not self._is_allowed(update):
+            return
         chat_id = update.effective_chat.id
         self.conversations.pop(chat_id, None)
         await update.message.reply_text("Context cleared.")
 
     async def list_models(self, update: Update, context: CallbackContext) -> None:
+        if not self._is_allowed(update):
+            return
         """List available models and show the current selection."""
         await update.message.reply_text(
             "Available models: "
@@ -493,6 +510,8 @@ class TelegramBot:
         )
 
     async def set_model(self, update: Update, context: CallbackContext) -> None:
+        if not self._is_allowed(update):
+            return
         """Set the model used for OpenAI requests."""
         if not context.args:
             await self.list_models(update, context)
@@ -509,6 +528,8 @@ class TelegramBot:
         await msg.reply_text(f"Model set to {model}.")
 
     async def list_bots(self, update: Update, context: CallbackContext) -> None:
+        if not self._is_allowed(update):
+            return
         """List available bot backends and show the current selection."""
         await update.message.reply_text(
             "Available bots: "
@@ -517,6 +538,8 @@ class TelegramBot:
         )
 
     async def set_bot(self, update: Update, context: CallbackContext) -> None:
+        if not self._is_allowed(update):
+            return
         if not context.args:
             await self.list_bots(update, context)
             return
@@ -536,6 +559,8 @@ class TelegramBot:
         await msg.reply_text(f"Bot set to {bot_name}.")
 
     async def start_consilium(self, update: Update, context: CallbackContext) -> None:
+        if not self._is_allowed(update):
+            return
         """Enable medical consilium mode for the chat."""
         chat_id = update.effective_chat.id
         bot_class = type(self.bot)
@@ -546,6 +571,8 @@ class TelegramBot:
         await msg.reply_text("Consilium started.")
 
     async def stop_consilium(self, update: Update, context: CallbackContext) -> None:
+        if not self._is_allowed(update):
+            return
         """Disable medical consilium mode for the chat."""
         chat_id = update.effective_chat.id
         self.bots.pop(chat_id, None)
@@ -553,6 +580,8 @@ class TelegramBot:
         await msg.reply_text("Consilium stopped.")
 
     async def handle_message(self, update: Update, context: CallbackContext) -> None:
+        if not self._is_allowed(update):
+            return
         message = update.message
         text = message.caption or message.text or ""
 
