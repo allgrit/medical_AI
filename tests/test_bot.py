@@ -435,18 +435,20 @@ def test_create_chat_completion_fallback(monkeypatch):
             body=None,
         )
 
-    def ok_completion(**kwargs):
-        calls.append("completion")
+    def ok_response(**kwargs):
+        calls.append("response")
         return {"choices": [{"text": "ok"}]}
 
     fake_openai = types.SimpleNamespace(
         api_key=None,
         chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=fail_chat)),
-        completions=types.SimpleNamespace(create=ok_completion),
+        completions=types.SimpleNamespace(create=lambda **k: None),
+        responses=types.SimpleNamespace(create=ok_response),
         NotFoundError=openai.NotFoundError,
     )
 
     monkeypatch.setattr("bot.bot.openai", fake_openai)
+    monkeypatch.setattr("bot.bot._is_chat_model", lambda m: True)
 
     from bot.bot import _create_chat_completion
 
@@ -454,4 +456,4 @@ def test_create_chat_completion_fallback(monkeypatch):
         model="o4-mini-deep-research", messages=[{"role": "user", "content": "hi"}]
     )
     assert resp["choices"][0]["text"] == "ok"
-    assert calls == ["chat", "completion"]
+    assert calls == ["chat", "response"]
