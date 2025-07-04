@@ -123,17 +123,25 @@ def _create_chat_completion(**kwargs):
             return openai.completions.create(**params)
         return openai.Completion.create(**params)
 
+    def call_response() -> object:
+        params = kwargs.copy()
+        if "messages" in params:
+            params["prompt"] = _messages_to_prompt(params.pop("messages"))
+        if hasattr(openai, "responses"):
+            return openai.responses.create(**params)
+        return openai.Responses.create(**params)
+
     use_chat = _is_chat_model(model)
 
     try:
         return call_chat() if use_chat else call_completion()
     except openai.NotFoundError as e:
         msg = str(e).lower()
-        if use_chat and "v1/responses" in msg:
+        if "v1/responses" in msg:
+            return call_response()
+        if use_chat:
             return call_completion()
-        if not use_chat and "chat" in msg:
-            return call_chat()
-        raise
+        return call_chat()
 
 
 logger = logging.getLogger(__name__)
