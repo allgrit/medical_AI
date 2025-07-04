@@ -9,6 +9,10 @@ CONTEXT_WINDOW_MESSAGES = 20
 DOC_MAX_CHARS = 2000
 TELEGRAM_MAX_CHARS = 4096
 
+# Telegram user IDs allowed to interact with the bot. Leave empty to allow any
+# user. If populated, only these users will be able to use the bot.
+ALLOWED_TELEGRAM_IDS: list[int] = []
+
 # List of assistants interacting with each other.
 # Each assistant has a role and a system prompt.
 ASSISTANTS = [
